@@ -1,3 +1,1 @@
-"""
-Test suite package for MeshWeaver.
-"""
+"""MeshWeaver Tests Package"""
