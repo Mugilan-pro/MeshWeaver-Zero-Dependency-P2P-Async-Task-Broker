@@ -1,145 +1,93 @@
-# MeshWeaver: Zero-Dependency P2P Async Task Broker
-## Core Networking Layer (Member 2: P2P Networking Developer)
+# MeshWeaver: Decentralized P2P Task Broker
+
+MeshWeaver is a pure Python peer-to-peer task broker. It replaces centralized task brokers (like Celery, Redis, or RabbitMQ) by forming a decentralized mesh network where compute tasks are negotiated, load-balanced, and executed across peers.
 
 ---
 
-## 📌 Overview
-
-This repository contains the core networking subsystem for **MeshWeaver: Zero-Dependency P2P Async Task Broker**.
-
-As **Member 2 (P2P Networking Developer)**, the goal was to design and implement a high-performance, asynchronous TCP communication layer built **strictly on Python's standard library** (zero external dependencies, zero `pip` packages).
-
-This networking layer serves as the communication foundation upon which the **Distributed Hash Table (DHT)** and **Gossip / Task Broker** modules interface.
-
----
-
-## 🏗️ Architecture & Key Design Decisions
-
-### 1. Length-Prefixed Framing (TCP Anti-Fragmentation)
-TCP is a byte-stream protocol without intrinsic message boundary semantics. A single message may be split across multiple TCP packets (fragmentation), or multiple small messages may be batched into a single packet (stream coalescing).
-
-To prevent message corruption and truncation:
-* Every message is preceded by a **4-byte fixed-size header** formatted as an unsigned 32-bit big-endian integer (`!I` via `struct.pack`).
-* The header indicates the exact byte length of the upcoming payload.
-* The payload is a UTF-8 encoded JSON string.
-* `read_message()` uses `asyncio.StreamReader.readexactly()`:
-  * First reads exactly 4 bytes for the header.
-  * Then reads exactly $N$ bytes for the payload.
-* A security limit of **16 MB (`MAX_PAYLOAD_SIZE`)** prevents malicious or malformed packets from causing Out-Of-Memory (OOM) denial-of-service.
+## Repository Structure
 
 ```
-+------------------------------------+-------------------------------------------+
-| Header: 4 Bytes (struct '!I')      | Payload: N Bytes (UTF-8 JSON string)      |
-| Length of Payload in Big-Endian    | {"type": "PING", "sender_id": "node_01"}  |
-+------------------------------------+-------------------------------------------+
+mesh-weaver/
+├── config.py                       # Global network, DHT, and task settings
+├── dht/                            # Member 3: Kademlia DHT & peer discovery
+│   ├── __init__.py
+│   ├── node_id.py                  # 160-bit NodeID and XOR distance metric
+│   ├── routing.py                  # K-bucket routing table (k=20, LRU cache)
+│   └── discovery.py                # Asyncio UDP RPCs (PING, FIND_NODE), bootstrap & alpha-lookup
+├── task/                           # Member 4: Task engine & serialization
+│   ├── __init__.py
+│   ├── models.py                   # Task and TaskResult models
+│   ├── serializer.py               # Serializer with SHA-256 integrity verification
+│   └── executor.py                 # Async worker pool executor
+├── scheduler/                      # Member 4: Workload routing & fault tolerance
+│   ├── __init__.py
+│   ├── router.py                   # Load-aware worker selection (least CPU)
+│   └── reliability.py              # Lease tracking & dropout reassignment
+├── tests/                          # Automated unit tests
+│   ├── test_dht.py                 # Member 3 DHT unit tests (13 tests)
+│   ├── test_tasks.py               # Task serialization & execution tests
+│   └── test_scheduler.py           # Workload routing & recovery tests
+├── examples/                       # Demos & network audits
+│   ├── dht_discovery_demo.py       # DHT peer discovery walkthrough
+│   ├── network_audit_demo.py       # Mid-Project Review: 10-node dynamic mesh audit
+│   ├── task_execution_demo.py      # Math compute benchmark demo
+│   └── task_distribution_demo.py  # Load routing & worker crash recovery demo
+└── docs/                           # Architecture specifications
+    ├── dht_architecture.md         # Member 3 DHT specification & RPC protocol
+    └── task_engine_architecture.md # Member 4 Task engine architecture
 ```
 
 ---
 
-### 2. Fully Asynchronous TCP Server (`P2PServer`)
-* Built directly using `asyncio.start_server`.
-* Supports dynamic ephemeral ports (`port=0`), exposing `actual_port` for deterministic testing.
-* **Continuous Streaming Loop**: Keeps socket connections alive and continuously reads framed messages until the remote peer cleanly disconnects.
-* **Adaptive Callback Dispatching**: The `message_handler` callback can be:
-  * Asynchronous (`async def`) or synchronous (`def`).
-  * 1-argument (`handler(message)`) or 2-argument (`handler(message, peer_address)`).
-* **Graceful Teardown**: `stop()` gracefully signals the listening server to stop accepting new peers, and iterates through active socket connections to close them cleanly.
+## Member 3 Deliverables (Weeks 1 & 2)
+
+As **Member 3 (DHT & Peer Discovery Developer)**, the following deliverables are completed:
+
+1. **Node IDs & XOR Distance (`dht/node_id.py`)**:
+   - 160-bit keyspace with SHA-1 hashing.
+   - XOR distance metric $d(x, y) = x \oplus y$.
+   - Bitwise prefix matching and $O(1)$ k-bucket index calculation.
+2. **K-Bucket Routing Table (`dht/routing.py`)**:
+   - 160 k-buckets ($k=20$) with LRU ordering.
+   - Replacement cache to handle full buckets and promote active nodes on eviction.
+   - $O(\log N)$ closest-peer search sorted strictly by XOR distance.
+3. **Asyncio UDP Peer Discovery & Bootstrap (`dht/discovery.py`)**:
+   - Lightweight RPC protocol (`PING`, `PONG`, `FIND_NODE`, `FOUND_NODES`).
+   - Dynamic bootstrap join (no hardcoded IP lists needed).
+   - $\alpha$-concurrent iterative node lookup ($\alpha=3$).
+4. **Mid-Project Review Network Audit (`examples/network_audit_demo.py`)**:
+   - Proves 10 local instances dynamically join via a single bootstrap seed and discover each other to form a complete mesh.
 
 ---
 
-### 3. Fault-Tolerant TCP Client (`P2PClient`)
-* Connects to target peers, transmits framed messages, awaits a single response, and cleanly shuts down the socket.
-* **Strict Timeout Boundaries**: Every network roundtrip is guarded by `asyncio.wait_for(...)`.
-* **Silent Error Recovery**: Catches `ConnectionRefusedError`, `TimeoutError`, and `OSError` (e.g. offline peer, network partition, packet loss), logs descriptive warnings, and returns `None` instead of raising unhandled exceptions that could crash the node.
-* **One-Shot Convenience Method**: Provides `P2PClient.send_to(host, port, message_dict, timeout=5.0)` for ad-hoc RPC queries, heartbeats, and gossip dissemination without managing client lifecycles manually.
+## Running the Code
 
----
-
-## 📂 File Deliverables
-
-| File | Path | Description |
-| :--- | :--- | :--- |
-| **`network/protocol.py`** | [network/protocol.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/protocol.py) | `MessageProtocol` class with `encode_message` and `read_message`. |
-| **`network/server.py`** | [network/server.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/server.py) | `P2PServer` class using `asyncio.start_server` with client session management. |
-| **`network/client.py`** | [network/client.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/client.py) | `P2PClient` class with `asyncio.wait_for` timeout protection and error handling. |
-| **`network/__init__.py`** | [network/__init__.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/__init__.py) | Package initialization exporting `MessageProtocol`, `P2PServer`, and `P2PClient`. |
-| **`tests/test_network.py`** | [tests/test_network.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/tests/test_network.py) | Comprehensive `unittest` suite covering fragmentation, timeouts, and roundtrips. |
-| **`example_node.py`** | [example_node.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/example_node.py) | End-to-end executable script simulating two peers interacting over loopback. |
-
----
-
-## 🚀 Running the Code
-
-### 1. Run the End-to-End Demo
-Executes a simulated peer node (`Node Alpha` server on port `9001`) and a client peer (`Node Beta`), performing:
-* Ping / Pong health checks.
-* DHT routing queries.
-* Asynchronous task execution requests.
-* Offline peer error handling (`ConnectionRefusedError` tolerance).
+### 1. Run Unit Tests
 
 ```bash
-python example_node.py
+# Member 3 DHT unit tests (13 tests)
+python -m unittest tests/test_dht.py
+
+# Member 4 tests
+python -m unittest tests/test_tasks.py
+python -m unittest tests/test_scheduler.py
 ```
 
-### 2. Run the Unit & Integration Tests
-Uses Python's standard library `unittest` and `unittest.IsolatedAsyncioTestCase`:
+### 2. Run Mid-Project Review Network Audit (10 Nodes)
 
 ```bash
-python -m unittest tests/test_network.py
+python examples/network_audit_demo.py
 ```
 
----
+### 3. Run Interactive Demos
 
-## 🤝 Integration Guide for Team Members
+```bash
+# DHT discovery & routing demo
+python examples/dht_discovery_demo.py
 
-### How Member 1 (DHT Module) Integrates:
-```python
-from network import P2PClient
+# Task engine compute benchmarks
+python examples/task_execution_demo.py
 
-async def find_closest_nodes(target_node_id: str, peer_host: str, peer_port: int):
-    query = {
-        "type": "DHT_FIND_NODE",
-        "target_id": target_node_id,
-        "sender_id": "local_node_id",
-    }
-    
-    # One-shot RPC with a 3.0 second timeout
-    response = await P2PClient.send_to(peer_host, peer_port, query, timeout=3.0)
-    
-    if response and response.get("type") == "DHT_NODES_FOUND":
-        return response.get("closest_peers", [])
-    
-    # Peer is offline or timed out; remove or deprioritize in routing table
-    return []
+# Task distribution & crash recovery demo
+python examples/task_distribution_demo.py
 ```
-
-### How Member 3 (Gossip / Task Broker) Integrates:
-```python
-import asyncio
-from network import P2PServer
-
-async def task_broker_router(message: dict, sender_addr: tuple) -> dict:
-    msg_type = message.get("type")
-    
-    if msg_type == "TASK_SUBMIT":
-        task_id = message["task"]["id"]
-        # Enqueue task into internal async queue
-        return {"status": "ACCEPTED", "task_id": task_id}
-        
-    elif msg_type == "GOSSIP_DIGEST":
-        # Merge remote peer state into local membership view
-        return {"status": "ACK", "digest_received": True}
-        
-    return {"status": "ERROR", "message": "Unknown type"}
-
-# Start peer server listening for incoming mesh messages
-server = P2PServer(host="0.0.0.0", port=8000, message_handler=task_broker_router)
-await server.start()
-```
-
----
-
-## 🔒 Dependencies
-* **Python**: $\ge$ 3.8
-* **External Dependencies**: **None** (100% standard library)
-#
