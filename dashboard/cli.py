@@ -21,15 +21,15 @@ from gossip.models import NodeMetrics, PeerHealthState, PeerNodeRecord
 from gossip.monitor import GossipMonitor
 
 try:
-    import rich
-    from rich.align import Align
-    from rich.console import Console
-    from rich.layout import Layout
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.progress_bar import ProgressBar
-    from rich.table import Table
-    from rich.text import Text
+    import rich  # type: ignore
+    from rich.align import Align  # type: ignore
+    from rich.console import Console  # type: ignore
+    from rich.layout import Layout  # type: ignore
+    from rich.live import Live  # type: ignore
+    from rich.panel import Panel  # type: ignore
+    from rich.progress_bar import ProgressBar  # type: ignore
+    from rich.table import Table  # type: ignore
+    from rich.text import Text  # type: ignore
     _HAS_RICH = True
 except ImportError:
     rich = None
@@ -328,13 +328,27 @@ class RichTerminalDashboard:
 
     def print_snapshot(self) -> None:
         """Prints the dashboard snapshot to stdout."""
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
         if _HAS_RICH and self._console:
             self._console.print(self._build_rich_layout())
         else:
-            print(self._render_fallback_snapshot())
+            try:
+                print(self._render_fallback_snapshot())
+            except UnicodeEncodeError:
+                out = self._render_fallback_snapshot().encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8")
+                print(out)
 
     async def run_live(self, refresh_seconds: float = 1.0, max_ticks: Optional[int] = None) -> None:
         """Runs the live-updating dashboard in the terminal."""
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
         tick = 0
         if _HAS_RICH and self._console:
             with Live(self._build_rich_layout(), console=self._console, refresh_per_second=int(1.0 / refresh_seconds)) as live:
@@ -348,7 +362,11 @@ class RichTerminalDashboard:
             while self.monitor.is_running:
                 sys.stdout.write("\033[H\033[2J")
                 sys.stdout.flush()
-                print(self._render_fallback_snapshot())
+                try:
+                    print(self._render_fallback_snapshot())
+                except UnicodeEncodeError:
+                    out = self._render_fallback_snapshot().encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8")
+                    print(out)
                 await asyncio.sleep(refresh_seconds)
                 tick += 1
                 if max_ticks and tick >= max_ticks:
