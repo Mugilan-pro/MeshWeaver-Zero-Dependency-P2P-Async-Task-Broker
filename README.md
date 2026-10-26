@@ -82,6 +82,9 @@ python examples/network_audit_demo.py
 ### 3. Run Interactive Demos
 
 ```bash
+# Web Dashboard & Real-Time Topology Monitor (Runs on http://127.0.0.1:8080)
+python examples/web_dashboard_demo.py
+
 # DHT discovery & routing demo
 python examples/dht_discovery_demo.py
 
@@ -90,4 +93,7 @@ python examples/task_execution_demo.py
 
 # Task distribution & crash recovery demo
 python examples/task_distribution_demo.py
+
+# Terminal live monitor (Rich TUI fallback)
+python examples/gossip_dashboard_demo.py
 ```
