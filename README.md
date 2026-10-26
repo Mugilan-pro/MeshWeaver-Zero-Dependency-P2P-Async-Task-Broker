@@ -23,6 +23,9 @@ mesh-weaver/
 │   ├── __init__.py
 │   ├── router.py                   # Load-aware worker selection (least CPU)
 │   └── reliability.py              # Lease tracking & dropout reassignment
+├── storage/                        # Persistent SQLite WAL Storage Subsystem
+│   ├── __init__.py
+│   └── db.py                       # Zero-dependency persistent task & audit engine
 ├── tests/                          # Automated unit tests
 │   ├── test_dht.py                 # Member 3 DHT unit tests (13 tests)
 │   ├── test_tasks.py               # Task serialization & execution tests

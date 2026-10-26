@@ -110,6 +110,12 @@ class TestMeshWeaverWebServer(unittest.TestCase):
         self.assertIn("execution_time_ms", res)
         self.assertEqual(res["result"], 95)  # 95 primes under 500
 
+        # Verify task is persisted in /api/tasks
+        status_tasks, _, body_tasks = self._get("/api/tasks")
+        self.assertEqual(status_tasks, 200)
+        tasks = json.loads(body_tasks)
+        self.assertTrue(any(t["task_id"] == res["task_id"] for t in tasks))
+
     def test_api_simulate_crash_and_recover(self):
         # Crash
         status, res = self._post("/api/simulate/crash", {"node_id": "test_worker_1"})

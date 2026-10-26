@@ -25,6 +25,7 @@ from gossip.models import PeerHealthState
 from gossip.monitor import GossipMonitor
 from scheduler.reliability import ReliabilityManager
 from scheduler.router import TaskRouter, RoutingStrategy, WorkerNodeInfo
+from storage.db import MeshWeaverStorage
 from task.executor import TaskExecutor
 from task.models import Task, TaskPriority, TaskResult, TaskStatus
 from task.serializer import TaskSerializer
@@ -162,6 +163,10 @@ class MeshWeaverHTTPRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.server_app.get_events_list())
             return
 
+        elif path == "/api/tasks":
+            self._send_json(200, self.server_app.get_tasks_list())
+            return
+
         self._send_json(404, {"error": "NotFound", "path": path})
 
     def do_POST(self) -> None:
@@ -213,9 +218,11 @@ class MeshWeaverWebServer:
         router: Optional[TaskRouter] = None,
         reliability: Optional[ReliabilityManager] = None,
         event_logger: Optional[DashboardEventLogger] = None,
+        storage: Optional[MeshWeaverStorage] = None,
     ) -> None:
         self.host = host
         self.port = port
+        self.storage = storage or MeshWeaverStorage.get_instance()
         self.monitor = monitor or GossipMonitor(local_node_id="gateway_node", host=host, port=8000)
         self.router = router or TaskRouter(local_node_id=self.monitor.local_node_id)
         self.reliability = reliability or ReliabilityManager()
@@ -227,10 +234,16 @@ class MeshWeaverWebServer:
         self._is_running = False
         self._total_completed_tasks = 0
 
-        # Wire monitor callbacks to event logger and router
+        # Wire monitor and persistence callbacks
         self._wire_subsystem_events()
 
     def _wire_subsystem_events(self) -> None:
+        # Wire event logger to persist in SQLite
+        orig_log = self.event_logger.log
+        def _persisting_log(level: str, message: str) -> None:
+            orig_log(level, message)
+            self.storage.save_event(level, message)
+        self.event_logger.log = _persisting_log
         def on_dropout(node_id: str) -> None:
             self.event_logger.log("ALERT", f"Heartbeat lost: {node_id} marked DEAD")
             self.router.mark_worker_dead(node_id)
@@ -275,10 +288,11 @@ class MeshWeaverWebServer:
         avg_cpu = sum(m.cpu_percent for m in all_nodes) / max(1, len(all_nodes))
         avg_ram = sum(m.ram_percent for m in all_nodes) / max(1, len(all_nodes))
 
+        persisted_completed = self.storage.count_tasks(status="COMPLETED")
         return {
             "total_nodes": total_nodes,
             "healthy_nodes": healthy_count,
-            "completed_tasks": self._total_completed_tasks,
+            "completed_tasks": max(self._total_completed_tasks, persisted_completed),
             "in_flight_tasks": self.reliability.in_flight_count,
             "dead_letter_tasks": self.reliability.dead_letter_count,
             "avg_cpu": round(avg_cpu, 1),
@@ -286,7 +300,13 @@ class MeshWeaverWebServer:
             "gossip_rounds": self.monitor.stats.get("gossip_rounds", 0),
             "local_node_id": self.monitor.local_node_id,
             "uptime_seconds": round(local_metrics.uptime_seconds, 1),
+            "storage_db": os.path.basename(self.storage.db_path),
+            "total_persisted_tasks": self.storage.count_tasks(),
         }
+
+    def get_tasks_list(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns persisted tasks from SQLite."""
+        return self.storage.get_recent_tasks(limit=limit)
 
     def get_nodes_list(self) -> List[Dict[str, Any]]:
         """Returns detailed telemetry list of all nodes."""
@@ -361,8 +381,15 @@ class MeshWeaverWebServer:
         selected_worker = self.router.select_worker(task, strategy=strategy)
         worker_id = selected_worker.node_id if selected_worker else self.monitor.local_node_id
 
-        # Track lease
+        # Track lease and persist initial state
         self.reliability.assign_task(task, worker_id)
+        self.storage.save_task(
+            task_id=task.task_id,
+            name=preset,
+            status="RUNNING",
+            priority=priority.value,
+            assigned_worker=worker_id,
+        )
         self.event_logger.log("TASK", f"Dispatched {preset} to {worker_id} (strategy: {strategy.value})")
 
         start_time = time.perf_counter()
@@ -381,6 +408,18 @@ class MeshWeaverWebServer:
             self.reliability.record_success(task.task_id, task_res)
             self._total_completed_tasks += 1
 
+            # Persist completion
+            self.storage.save_task(
+                task_id=task.task_id,
+                name=preset,
+                status="COMPLETED",
+                priority=priority.value,
+                assigned_worker=worker_id,
+                execution_time_ms=round(exec_duration_ms, 2),
+                result=result_val,
+                completed_at=time.time(),
+            )
+
             # Update worker completed count
             if worker_id != self.monitor.local_node_id:
                 peer = self.monitor.get_peer(worker_id)
@@ -393,6 +432,16 @@ class MeshWeaverWebServer:
             exec_duration_ms = (time.perf_counter() - start_time) * 1000.0
             result_val = f"Error: {e}"
             status_str = "FAILED"
+            self.storage.save_task(
+                task_id=task.task_id,
+                name=preset,
+                status="FAILED",
+                priority=priority.value,
+                assigned_worker=worker_id,
+                execution_time_ms=round(exec_duration_ms, 2),
+                error_message=str(e),
+                completed_at=time.time(),
+            )
             self.event_logger.log("ALERT", f"Task {task.task_id[:8]} failed on {worker_id}: {e}")
 
         return {
