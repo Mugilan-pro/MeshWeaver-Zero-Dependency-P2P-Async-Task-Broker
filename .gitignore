@@ -1,8 +1,13 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
+=======
+# Byte-compiled / cache files
+>>>>>>> team/main
 __pycache__/
 *.py[cod]
 *$py.class
 
+<<<<<<< HEAD
 # C extensions
 *.so
 
@@ -45,3 +50,24 @@ venv.bak/
 .coverage
 htmlcov/
 .pytest_cache/
+=======
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Editor & OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Archives & assignment docs
+*.zip
+*.pdf
+>>>>>>> team/main
