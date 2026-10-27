@@ -1460,22 +1460,24 @@
       }
     });
 
-    // Load persisted task history from SQLite on boot
+    // Load persisted task history from SQLite — called on boot and every 5s
     async function loadPersistedTasks() {
       try {
         const tasks = await fetch('/api/tasks').then(r => r.json());
         if (tasks && tasks.length > 0) {
           taskHistory = tasks;
           const tbody = document.getElementById('tasks-table-body');
-          tbody.innerHTML = tasks.slice(0, 15).map(t => `
+          tbody.innerHTML = tasks.slice(0, 15).map(t => {
+            const statusClass = t.status === 'COMPLETED' ? 'healthy' : t.status === 'FAILED' ? 'dead' : 'suspect';
+            return `
             <tr>
               <td><code style="color: var(--accent-primary);">${(t.task_id || '').substring(0, 8)}...</code></td>
               <td><b>${t.task_name || 'Compute'}</b></td>
               <td>${t.worker_node_id || '--'}</td>
               <td>${(t.execution_time_ms || 0).toFixed(2)} ms</td>
-              <td><span class="node-status-badge ${t.status === 'COMPLETED' ? 'healthy' : 'dead'}">${t.status || 'DONE'}</span></td>
+              <td><span class="node-status-badge ${statusClass}">${t.status || 'DONE'}</span></td>
             </tr>
-          `).join('');
+          `}).join('');
         }
       } catch (e) {
         console.warn('Could not load persisted tasks:', e);
@@ -1486,6 +1488,8 @@
     loadPersistedTasks();
     fetchClusterData();
     pollTimer = setInterval(fetchClusterData, pollInterval);
+    // Refresh task history every 5 seconds independently of cluster poll
+    setInterval(loadPersistedTasks, 5000);
   </script>
 </body>
 </html>

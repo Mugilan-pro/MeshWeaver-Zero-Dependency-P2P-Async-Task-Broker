@@ -233,6 +233,9 @@ class MeshWeaverWebServer:
         self._thread: Optional[threading.Thread] = None
         self._is_running = False
         self._total_completed_tasks = 0
+        # Dedicated local-node completed task counter (collect() returns a
+        # fresh NodeMetrics snapshot every call, so we cannot mutate it)
+        self._local_completed_tasks: int = 0
 
         # Wire monitor and persistence callbacks
         self._wire_subsystem_events()
@@ -282,17 +285,25 @@ class MeshWeaverWebServer:
         local_metrics = self.monitor.metrics_collector.collect()
         all_nodes = [local_metrics] + [p.metrics for p in self.monitor._peers.values()]
         
-        healthy_count = (1 if True else 0) + self.monitor.healthy_peer_count
+        # Local node is always considered healthy (it is this process);
+        # the previous `(1 if True else 0)` was a placeholder that could
+        # never reflect an unhealthy local state — we keep the intent but
+        # make it explicit.
+        local_is_healthy = 1  # local process is alive by definition
+        healthy_count = local_is_healthy + self.monitor.healthy_peer_count
         total_nodes = 1 + self.monitor.peer_count
 
         avg_cpu = sum(m.cpu_percent for m in all_nodes) / max(1, len(all_nodes))
         avg_ram = sum(m.ram_percent for m in all_nodes) / max(1, len(all_nodes))
 
         persisted_completed = self.storage.count_tasks(status="COMPLETED")
+        # Use the dedicated local counter (not collect() which returns a
+        # fresh snapshot each call) as the in-memory source of truth.
+        in_memory_completed = max(self._total_completed_tasks, self._local_completed_tasks)
         return {
             "total_nodes": total_nodes,
             "healthy_nodes": healthy_count,
-            "completed_tasks": max(self._total_completed_tasks, persisted_completed),
+            "completed_tasks": max(in_memory_completed, persisted_completed),
             "in_flight_tasks": self.reliability.in_flight_count,
             "dead_letter_tasks": self.reliability.dead_letter_count,
             "avg_cpu": round(avg_cpu, 1),
@@ -309,8 +320,10 @@ class MeshWeaverWebServer:
         return self.storage.get_recent_tasks(limit=limit)
 
     def get_nodes_list(self) -> List[Dict[str, Any]]:
-        """Returns detailed telemetry list of all nodes."""
+        """Returns detailed telemetry list of all nodes and persists snapshots."""
         local_metrics = self.monitor.metrics_collector.collect()
+        # Use the dedicated counter so local completed_tasks is accurate
+        local_completed = self._local_completed_tasks
         nodes = [{
             "node_id": self.monitor.local_node_id,
             "host": self.monitor.host,
@@ -319,10 +332,22 @@ class MeshWeaverWebServer:
             "cpu_percent": local_metrics.cpu_percent,
             "ram_percent": local_metrics.ram_percent,
             "active_tasks": local_metrics.active_tasks,
-            "completed_tasks": local_metrics.completed_tasks,
+            "completed_tasks": local_completed,
             "is_local": True,
             "last_heartbeat": "0.0s self",
         }]
+
+        # Persist local node telemetry snapshot for history charts
+        try:
+            self.storage.record_node_snapshot(
+                node_id=self.monitor.local_node_id,
+                cpu_percent=local_metrics.cpu_percent,
+                ram_percent=local_metrics.ram_percent,
+                active_tasks=local_metrics.active_tasks,
+                status="HEALTHY",
+            )
+        except Exception:
+            pass
 
         now = time.time()
         for p in self.monitor._peers.values():
@@ -339,6 +364,17 @@ class MeshWeaverWebServer:
                 "is_local": False,
                 "last_heartbeat": f"{delta:.1f}s ago" if p.is_alive else "DEAD",
             })
+            # Persist peer telemetry snapshot
+            try:
+                self.storage.record_node_snapshot(
+                    node_id=p.node_id,
+                    cpu_percent=p.metrics.cpu_percent,
+                    ram_percent=p.metrics.ram_percent,
+                    active_tasks=p.metrics.active_tasks,
+                    status=p.health_state.value,
+                )
+            except Exception:
+                pass
 
         return nodes
 
@@ -426,7 +462,9 @@ class MeshWeaverWebServer:
                 if peer:
                     peer.metrics.completed_tasks += 1
             else:
-                self.monitor.metrics_collector.collect().completed_tasks += 1
+                # collect() returns a fresh NodeMetrics each call, so we
+                # track local completions in a dedicated server-level counter
+                self._local_completed_tasks += 1
 
         except Exception as e:
             exec_duration_ms = (time.perf_counter() - start_time) * 1000.0
