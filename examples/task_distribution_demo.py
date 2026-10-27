@@ -5,6 +5,7 @@ Demonstrates:
  2. Non-blocking asynchronous task execution with timeout enforcement.
  3. Lowest CPU-load workload routing across decentralized mesh nodes.
  4. Automatic fault recovery: Detecting node dropouts and reassignment.
+ 5. Dead-Letter Queue (DLQ) containment for permanently failed tasks.
 """
 
 import asyncio
@@ -92,7 +93,7 @@ async def run_simulation():
     # 4. Fault Tolerance: Node Drop & Instant Reassignment
     # -------------------------------------------------------------
     print("\n[Step 4] Simulating Worker Failure & Resilient Reassignment...")
-    reliability = ReliabilityManager(default_max_retries=3)
+    reliability = ReliabilityManager(default_max_retries=2)
 
     # Assign task to the chosen node
     reliability.assign_task(benchmark_task, selected_worker.node_id)
@@ -105,8 +106,22 @@ async def run_simulation():
         print(f" -> Recovered Task     : {orphaned_task.name} (Retry #{orphaned_task.retry_count})")
         print(f" -> Reassigned Worker  : {new_target.node_id} (CPU: {new_target.cpu_percent:.1f}%)")
 
+    # -------------------------------------------------------------
+    # 5. Dead-Letter Queue (DLQ) Containment
+    # -------------------------------------------------------------
+    print("\n[Step 5] Simulating Repeated Failure & Dead-Letter Queue (DLQ)...")
+    bad_task = Task(name="malformed_task", payload=b"", max_retries=1)
+    reliability.assign_task(bad_task, "mesh_node_02")
+    reliability.record_failure_and_retry(bad_task.task_id, "Segmentation fault in C extension", router)
+    reliability.record_failure_and_retry(bad_task.task_id, "Fatal out of memory", router)
+
+    print(f" -> Dead-Letter Queue Count: {reliability.dead_letter_count}")
+    dlq_items = reliability.get_dead_letter_queue()
+    for item in dlq_items:
+        print(f"    [DLQ Task] ID={item['task_id'][:8]} | Name={item['name']} | Reason: {item['reason']}")
+
     print("\n" + "=" * 70)
-    print("  SIMULATION COMPLETE: ALL SUBSYSTEMS FULLY OPERATIONAL")
+    print("  SIMULATION COMPLETE: ALL RELIABILITY SUBSYSTEMS FULLY OPERATIONAL")
     print("=" * 70)
 
     executor.shutdown()
