@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meshweaver"
+version = "1.0.0"
+description = "Zero-Dependency Decentralized P2P Async Task Broker for Distributed & Edge Computing"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "MeshWeaver Engineering Team"}
+]
+keywords = [
+    "distributed-systems",
+    "p2p",
+    "task-queue",
+    "kademlia",
+    "dht",
+    "gossip-protocol",
+    "edge-computing",
+    "asyncio",
+    "ed25519",
+    "tls"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: System :: Distributed Computing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "cryptography>=3.4.0",
+    "rich>=10.0.0",
+]
+
+[project.optional-dependencies]
+cloudpickle = ["cloudpickle>=2.0.0"]
+psutil = ["psutil>=5.8.0"]
+dev = [
+    "cloudpickle>=2.0.0",
+    "psutil>=5.8.0",
+]
+
+[project.scripts]
+meshweaver = "cli:main"

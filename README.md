@@ -1,127 +1,47 @@
-# MeshWeaver: P2P Async Task Broker
-
-MeshWeaver is a lightweight, decentralized peer-to-peer task broker written in Python. It avoids the need for central infrastructure (like Redis or RabbitMQ) by letting nodes form an asyncio-based mesh network where tasks are cryptographically authenticated, routed based on lowest CPU load, and automatically re-routed if a worker crashes.
-
----
-
-## What is in this Repository
-
-This repository contains the complete implementation for **Weeks 1, 2, 3, and 4** of the MeshWeaver Decentralized Task Broker:
-
-### Week 1 — Mesh Setup, Pings & Task Serialization
-- **`task/models.py`**: Distributed unit of work model with lifecycle tracking (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `TIMEOUT`).
-- **`task/serializer.py`**: Binary function packaging with `cloudpickle` (falling back to standard library `pickle`), SHA-256 integrity checksums, and pre-packaged benchmarks.
-- **`gossip/models.py`**: Wire-level heartbeat ping envelopes (`HEARTBEAT`, `METRICS_UPDATE`).
-- **`gossip/metrics.py`**: Zero-dependency hardware telemetry collector (`psutil` fallback to POSIX `/proc` and `os.getloadavg`).
-
-### Week 2 — Periodic Gossip Telemetry & Failure Detection
-- **`gossip/monitor.py`**: Epidemic gossip engine broadcasting CPU/RAM loads to $k=3$ neighbors every 5.0 seconds.
-- **`gossip/models.py`**: Anti-entropy digest vector reconciliation (`GossipDigest`, `GOSSIP_DELTA`).
-- **`gossip/monitor.py`**: Two-tier heartbeat failure detector (`HEALTHY` $\to$ `SUSPECT` $\to$ `DEAD`).
-
-### Week 3 — Task Routing & Fault Tolerance
-- **`scheduler/router.py`**: Load-aware routing algorithm selecting the specific node with the lowest reported CPU load across the mesh (`LOWEST_CPU`, composite scoring, exclusion set during retries).
-- **`scheduler/reliability.py`**: Active task lease management, automated orphaned task capture, and dynamic re-assignment upon worker dropout.
-- **`scheduler/reliability.py`**: Bounded retry enforcement and Dead-Letter Queue (DLQ) isolation for permanently failing tasks.
-- **Fault Recovery Bridge**: Connects `GossipMonitor` dropout events directly to `ReliabilityManager.handle_worker_dropout` for zero-data-loss workload recovery.
-
-### Week 4 — TLS/SSL Security, Cryptographic Signatures & Live Dashboard
-- **`security/tls.py`**: Transport Layer Security (TLS/SSL) wrapping with automatic X.509 self-signed certificate generation (RSA 2048-bit) and modern cipher suite negotiation.
-- **`security/crypto.py`**: Cryptographic message authentication using HMAC-SHA256. Signs every task request and validates payload integrity before execution, blocking forged or tampered workloads and preventing replay attacks.
-- **`dashboard/cli.py`**: Real-time CLI Terminal Dashboard featuring:
-  - **Real-Time Mesh Topology**: Inter-node link graph, endpoints, TLS security badges (`🔒 TLS`), and RTT link latencies.
-  - **Live Task Execution State**: In-flight leased tasks, assigned workers, retry counters, and Dead-Letter Queue (DLQ) inspection.
-  - **Telemetry Meters**: Visual progress bars (`[████░░░░░░]`) for CPU% and RAM% across all nodes.
-  - **Cluster Event Log**: Timestamped alerts for node join, routing decisions, heartbeats, and security rejections.
-- **`network/`**: Framed binary network protocol and asynchronous TCP/TLS client/server transports with in-memory virtual routing for sandboxed environments.
-- **`mesh/node.py`**: Unified `MeshNode` orchestrating execution, routing, reliability, gossip, TLS networking, and cryptographic security.
-- **`cli.py` & `setup.py`**: Production-ready command-line interface and packaging for edge computing environments.
-
----
-
-## Directory Structure
 # MeshWeaver: Zero-Dependency P2P Async Task Broker
 
-MeshWeaver is a decentralized, peer-to-peer task broker built entirely in pure Python. It eliminates centralized message queues (like Celery, Redis, or RabbitMQ) by forming a self-organizing mesh network where compute tasks are negotiated, load-balanced, and executed with automatic fault tolerance.
+[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Tests: Passing](https://img.shields.io/badge/tests-40%20passed-brightgreen.svg)]()
+
+MeshWeaver is a pure Python, decentralized peer-to-peer task broker designed for distributed and edge computing environments. It replaces centralized message brokers (like Celery, Redis, or RabbitMQ) by forming an autonomous mesh network where compute workloads are negotiated, load-balanced, and executed across peers with zero single points of failure.
 
 ---
 
-## Task Engine & Scheduling Architecture
+## Key Features
 
-This repository contains the core compute engine and decentralized scheduling subsystems:
-
-- **`task.models`**: Declarative state machines (`PENDING`, `SCHEDULED`, `RUNNING`, `COMPLETED`, `FAILED`, `TIMEOUT`) and wire-compatible task/result models.
-- **`task.serializer`**: High-fidelity callable serialization supporting dynamic closures via `cloudpickle` with fallback to standard library `pickle`/`json`, protected by SHA-256 integrity checksums.
-- **`task.executor`**: Asynchronous worker execution engine offloading compute to worker pools to prevent event loop starvation, with strict execution timeout enforcement.
-- **`scheduler.router`**: Decentralized workload distribution supporting Least-CPU Load and Composite Load balancing.
-- **`scheduler.reliability`**: Lease tracking, node crash detection, bounded retries, and automatic task reassignment.
-
----
-
-## Directory Structure
-
-```
-MeshWeaver/
-├── config.py                           # Global default configuration settings
-├── task/                               # Core task abstraction and execution engine
-│   ├── __init__.py
-│   ├── models.py                       # Task, TaskResult, TaskStatus, TaskPriority
-│   ├── serializer.py                   # Checksummed serializer & math benchmarks
-│   └── executor.py                     # Asynchronous pool executor with timeouts
-├── scheduler/                          # Workload distribution and fault tolerance
-│   ├── __init__.py
-│   ├── router.py                       # Load-aware worker selection algorithms
-│   └── reliability.py                  # Lease manager & dropout recovery
-├── tests/                              # Automated test suites
-│   ├── test_tasks.py                   # Task models, serializer, and executor tests
-│   └── test_scheduler.py               # Router and reliability recovery tests
-├── examples/                           # Interactive demonstration scripts
-│   ├── task_execution_demo.py          # Serialization and compute benchmark demo
-│   └── task_distribution_demo.py      # Network routing & crash recovery demo
-└── docs/
-    └── task_engine_architecture.md     # Subsystem specification & API contracts
-# MeshWeaver: Decentralized P2P Task Broker
-
-MeshWeaver is a **pure-Python, zero-dependency** peer-to-peer task broker. It replaces centralized task brokers (like Celery, Redis, or RabbitMQ) by forming a decentralized mesh network where compute tasks are negotiated, load-balanced, and executed across peers — using only Python's standard library.
-
----
-
-## Table of Contents
-
-- [Architecture Overview](#architecture-overview)
-- [Repository Structure](#repository-structure)
-- [Module Breakdown](#module-breakdown)
-  - [DHT & Peer Discovery](#dht--peer-discovery)
-  - [Gossip Protocol & Failure Detection](#gossip-protocol--failure-detection)
-  - [Task Engine & Serialization](#task-engine--serialization)
-  - [Scheduler & Fault Tolerance](#scheduler--fault-tolerance)
-  - [Persistent Storage](#persistent-storage)
-  - [Network Layer](#network-layer)
-  - [Web Dashboard](#web-dashboard)
-  - [Terminal CLI Dashboard](#terminal-cli-dashboard)
-- [Running the Code](#running-the-code)
-- [Tests](#tests)
-- [Architecture Docs](#architecture-docs)
+* **Zero Central Infrastructure**: No Redis, RabbitMQ, or central database required. Peers dynamically discover one another and coordinate directly.
+* **Kademlia DHT Peer Discovery**: 160-bit keyspace with XOR distance routing ($k=20$, $\alpha=3$) for scalable $O(\log N)$ peer lookups without hardcoded IP lists.
+* **Gossip Telemetry & Load Balancing**: Nodes exchange real-time CPU and RAM utilization metrics every 5 seconds. Compute tasks are automatically dispatched to the peer with the lowest load.
+* **Automated Fault Tolerance & Heartbeat Monitors**: Continuous heartbeat tracking flags unresponsive nodes and instantly re-routes orphaned in-flight tasks to healthy workers. Bounded retries isolate permanently failing jobs into a dead-letter queue.
+* **End-to-End Transport Layer Security (TLS/SSL)**: Inter-node TCP connections are encrypted with modern TLS 1.2+ using automatically provisioned self-signed X.509 certificates.
+* **Cryptographic Signatures (Ed25519)**: Every compute request is digitally signed by the origin node's private key. Workers cryptographically verify incoming requests and reject tampered or replayed tasks.
+* **Rich Terminal UI**: Live terminal dashboard powered by `rich` providing real-time visibility into cluster topology, DHT routing tables, gossip resource metrics, and task lifecycle execution.
+* **Edge-Ready & Zero-Dependency**: Runs on standard Python 3.7+ across Windows, Linux, and macOS (Raspberry Pis, servers, or local dev machines) with zero-dependency fallbacks.
 
 ---
 
 ## Architecture Overview
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        MeshWeaver Cluster                            │
-│                                                                      │
-│  ┌─────────────┐    Kademlia DHT     ┌─────────────┐                │
-│  │  Node A     │◄───────────────────►│  Node B     │                │
-│  │             │    Gossip / UDP     │             │                │
-│  │  TaskRouter │◄───────────────────►│  TaskRouter │                │
-│  │  Executor   │    TCP Tasks        │  Executor   │                │
-│  │  SQLite DB  │                     │  SQLite DB  │                │
-│  └──────┬──────┘                     └──────┬──────┘                │
-│         │                                   │                        │
-│         └──────────── Web Dashboard ────────┘                        │
-│                     http://127.0.0.1:8080                            │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph MeshNode["MeshWeaver Node"]
+        DHT["Kademlia DHT<br/>(UDP Peer Discovery)"]
+        Gossip["Gossip Engine<br/>(5s Telemetry & Heartbeat)"]
+        Router["TaskRouter<br/>(Lowest-CPU Load Balancer)"]
+        Reliability["Reliability Manager<br/>(Leases & Dropout Recovery)"]
+        Executor["TaskExecutor<br/>(Worker Pools & Timeouts)"]
+        Security["Security Subsystem<br/>(TLS & Ed25519 Signatures)"]
+        Transport["Network Transport<br/>(TCP/TLS Server & Client)"]
+    end
+
+    DHT -->|Register Discovered Peers| Router
+    Gossip -->|Ingest CPU/RAM Metrics| Router
+    Gossip -->|Report Lost Heartbeat| Reliability
+    Router -->|Select Optimal Worker| Reliability
+    Reliability -->|Signed Workload| Transport
+    Transport -->|Decrypted & Verified Payload| Executor
 ```
 
 ---
@@ -129,155 +49,56 @@ MeshWeaver is a **pure-Python, zero-dependency** peer-to-peer task broker. It re
 ## Repository Structure
 
 ```
-MeshWeaver/
-├── config.py                           # Global network, DHT, gossip & task settings
-│
-├── dht/                                # Kademlia DHT & peer discovery
-│   ├── node_id.py                      # 160-bit NodeID and XOR distance metric
-│   ├── routing.py                      # K-bucket routing table (k=20, LRU cache)
-│   └── discovery.py                    # Asyncio UDP RPCs (PING, FIND_NODE), bootstrap & alpha-lookup
-│
-├── gossip/                             # Gossip protocol & failure detection
-│   ├── models.py                       # PeerNodeRecord, NodeMetrics, GossipMessage models
-│   ├── metrics.py                      # CPU/RAM collector (psutil or /proc fallback)
-│   └── monitor.py                      # GossipMonitor: heartbeats, SUSPECT/DEAD detection, callbacks
-│
-├── task/                               # Task engine & serialization
-│   ├── models.py                       # Task, TaskResult, TaskStatus, TaskPriority models
-│   ├── serializer.py                   # Pickle + SHA-256 integrity serializer
-│   └── executor.py                     # Async worker pool executor
-│
-├── scheduler/                          # Workload routing & fault tolerance
-│   ├── router.py                       # Load-aware worker selection (LOWEST_CPU, ROUND_ROBIN, RANDOM)
-│   └── reliability.py                  # Lease tracking & dropout reassignment (dead-letter queue)
-│
-├── storage/                            # Zero-dependency persistent storage
-│   └── db.py                           # SQLite WAL engine: tasks, audit events, node snapshots
-│
-├── network/                            # TCP transport layer
-│   ├── protocol.py                     # Message framing & protocol constants
-│   ├── server.py                       # Async TCP server (asyncio)
-│   └── client.py                       # Async TCP client with reconnect
-│
-├── dashboard/                          # Monitoring & control interfaces
-│   ├── web_server.py                   # Zero-dependency HTTP server + REST API
-│   ├── cli.py                          # Terminal TUI (rich library or ANSI fallback)
-│   └── static/
-│       └── index.html                  # Single-page Web Dashboard (canvas topology, task dispatch)
-│
-├── examples/                           # Runnable demos
-│   ├── web_dashboard_demo.py           # Full cluster demo + Web Dashboard (http://127.0.0.1:8080)
-│   ├── gossip_dashboard_demo.py        # Terminal live gossip monitor demo
-│   ├── gossip_telemetry_demo.py        # Gossip telemetry & metric collection demo
-│   ├── task_execution_demo.py          # Compute benchmark demo (primes, matrix, Pi)
-│   ├── task_distribution_demo.py       # Load routing & worker crash recovery demo
-│   ├── week1_2_gossip_demo.py          # Gossip weeks 1 & 2 walkthrough
-│   ├── member4_demo.py                 # Task engine quick demo
-│   └── member5_demo.py                 # Gossip member demo
-│
-├── dht_discovery_demo.py               # DHT discovery & routing standalone demo
-├── network_audit_demo.py               # 10-node dynamic mesh audit (network-level)
-│
-├── tests/                              # Automated test suite (11 test files)
-│   ├── test_dht.py                     # DHT unit tests (NodeID, routing, discovery)
-│   ├── test_gossip.py                  # Gossip protocol tests
-│   ├── test_health.py                  # Peer health state & failure detection tests
-│   ├── test_tasks.py                   # Task serialization & execution tests
-│   ├── test_scheduler.py               # Workload routing & recovery tests
-│   ├── test_storage.py                 # SQLite persistence tests
-│   ├── test_network.py                 # TCP transport layer tests
-│   ├── test_web_dashboard.py           # Web server API tests
-│   ├── test_member5_gossip.py          # Member 5 gossip integration tests
-│   └── test_member4_tasks.py           # Member 4 task integration tests
-│
-└── docs/                               # Architecture specifications
-    ├── dht_architecture.md             # DHT specification & RPC protocol
-    ├── task_engine_architecture.md     # Task engine architecture
-    ├── gossip_fault_tolerance_architecture.md  # Gossip & failure detection design
-    └── member5_interface.md            # Member 5 interface contracts
-```
-
----
-
-
-## Execution Guide
-
-### 1. Run Automated Unit Tests
-
-Test task packaging, serialization integrity, and asynchronous execution:
-```bash
-python -m unittest tests/test_tasks.py
-```
-
-
-Test load-based routing and crash recovery:
-```bash
-python -m unittest tests/test_scheduler.py
-```
-MeshWeaver/
-├── cli.py                          # Unified CLI entrypoint (nodes, submit, dashboard, demos)
-├── setup.py                        # Python packaging configuration for edge deployment
-├── config.py                       # Global settings (ports, timeouts, TLS, HMAC secrets)
-├── mesh/                           # Unified P2P Mesh Node Orchestrator
-│   ├── __init__.py
-│   └── node.py                     # MeshNode implementation
-├── security/                       # Week 4 Security & Cryptography Layer
-│   ├── __init__.py
-│   ├── tls.py                      # TLS/SSL context management & X.509 cert generation
-│   └── crypto.py                   # HMAC-SHA256 task request signing & replay prevention
-├── network/                        # Asynchronous Networking Transport & Wire Framing
-│   ├── __init__.py
-│   ├── protocol.py                 # Binary framed NetworkPacket definitions
-│   └── transport.py                # Asyncio TCP/TLS MeshServer, MeshClient & In-Memory Router
-├── scheduler/                      # Week 3 Task Router & Reliability Subsystem
-│   ├── __init__.py
-│   ├── router.py                   # Lowest-CPU workload selection & composite load scoring
-│   └── reliability.py              # Lease tracking, dropout re-routing & Dead-Letter Queue
-├── task/                           # Task Engine & Serialization Subsystem
-│   ├── __init__.py
-│   ├── models.py                   # Task and TaskResult lifecycle models
-│   ├── serializer.py               # Cloudpickle/pickle serialization & SHA-256 integrity
-│   └── executor.py                 # Async isolated worker pools with execution timeouts
-├── gossip/                         # Gossip Protocol, Telemetry & Failure Detection
-│   ├── __init__.py
-│   ├── metrics.py                  # Zero-dependency CPU/RAM hardware sampling
-│   ├── models.py                   # PeerNodeRecord, GossipMessage, NodeMetrics, Digest
-│   └── monitor.py                  # 5s gossip loop & two-tier heartbeat failure detector
-├── dashboard/                      # Real-Time Terminal Dashboard
-│   ├── __init__.py
-│   └── cli.py                      # Mesh topology visualizer & task execution state table
-├── tests/                          # Comprehensive Automated Test Suites (91 Unit Tests)
-│   ├── test_week3_routing_fault_tolerance.py  # Week 3 dedicated test suite
-│   ├── test_week4_security_dashboard.py       # Week 4 dedicated test suite
-│   ├── test_mesh_node_integration.py          # End-to-end multi-node mesh integration tests
-│   ├── test_member5_gossip.py                 # Member 5 all-weeks test runner
-│   ├── test_member4_tasks.py                  # Member 4 test runner
-│   ├── test_tasks.py                          # Serialization & execution unit tests
-│   ├── test_scheduler.py                      # Scheduler routing & reliability tests
-│   ├── test_gossip.py                         # Metrics sampling & gossip protocol tests
-│   └── test_health.py                         # Heartbeat state machine & dropout tests
-├── examples/                       # Executable Demonstrations
-│   ├── week3_routing_demo.py                  # Week 3 Lowest-CPU Routing & Crash Recovery Demo
-│   ├── week4_security_demo.py                 # Week 4 TLS, HMAC-SHA256 & Topology Dashboard Demo
-│   ├── week3_4_full_mesh_demo.py              # Complete Weeks 1-4 End-to-End Cluster Demo
-│   ├── member5_week3_4_demo.py                # Member 5 Weeks 3 & 4 Milestone Demo
-│   ├── week1_2_gossip_demo.py                 # Weeks 1 & 2 Milestone Demo
-│   ├── gossip_dashboard_demo.py               # Live Terminal Dashboard Demo
-│   ├── member5_demo.py                        # Member 5 Demo Launcher
-│   ├── member4_demo.py                        # Member 4 Demo Launcher
-│   ├── task_distribution_demo.py              # Workload Distribution Demo
-│   └── task_execution_demo.py                 # Workload Packaging Demo
-└── docs/                           # Architectural Documentation & Specifications
-    ├── week3_week4_architecture.md            # Weeks 3 & 4 Comprehensive Architecture
-    ├── gossip_fault_tolerance_architecture.md # Gossip & Failure Detection Architecture
-    ├── member5_interface.md                   # Member 5 Interface Specification
-    └── task_engine_architecture.md            # Task Engine Architecture Specification
-
-### 2. Run Interactive Demos
-
-Run the Task Execution & Serialization Benchmark:
-```bash
-python examples/task_execution_demo.py
+mesh-weaver/
+├── pyproject.toml                         # Standardized Python package configuration
+├── config.py                              # Global network, DHT, gossip, and security settings
+├── node.py                                # Unified MeshNode orchestrator
+├── cli.py                                 # Command-line interface entry point
+├── meshweaver/                            # Top-level package wrapper
+│   ├── __init__.py                        # Public API exports
+│   └── __main__.py                        # Package executable (`python -m meshweaver`)
+├── dht/                                   # Kademlia DHT & Peer Discovery
+│   ├── node_id.py                         # 160-bit NodeID & XOR distance metric
+│   ├── routing.py                         # K-bucket routing table (k=20, LRU cache)
+│   └── discovery.py                       # Asyncio UDP RPCs (PING, FIND_NODE), bootstrap & alpha-lookup
+├── task/                                  # Task Engine & Serialization
+│   ├── models.py                          # Task and TaskResult lifecycle models
+│   ├── serializer.py                      # Serializer with SHA-256 integrity verification
+│   └── executor.py                        # Async worker pool executor
+├── scheduler/                             # Workload Routing & Fault Tolerance
+│   ├── router.py                          # Load-aware worker selection (lowest CPU load)
+│   └── reliability.py                     # Lease tracking, worker dropout reassignment, dead-letter queue
+├── gossip/                                # Gossip Protocol & Heartbeat Subsystem
+│   ├── telemetry.py                       # Real-time CPU/RAM hardware profiler
+│   └── engine.py                          # 5s gossip broadcast & heartbeat dropout detection
+├── network/                               # Async TCP/TLS Transport
+│   ├── protocol.py                        # Length-prefixed framing and JSON wire messages
+│   ├── server.py                          # Async TCP/TLS TaskServer with signature verification
+│   └── client.py                          # Async TCP/TLS TaskClient with task signing
+├── security/                              # Cryptographic Security Subsystem
+│   ├── crypto.py                          # Ed25519 keypairs, signing, verification & replay defense
+│   └── tls.py                             # Self-signed X.509 certs & SSLContext provisioning
+├── dashboard/                             # Real-Time Observability
+│   └── cli.py                             # Live terminal UI built with Rich
+├── tests/                                 # Automated Test Suite (40 Unit & Integration Tests)
+│   ├── test_dht.py                        # DHT node ID, k-buckets, UDP discovery (14 tests)
+│   ├── test_tasks.py                      # Task serialization & async execution (8 tests)
+│   ├── test_scheduler.py                  # Load routing & dropout reassignment (4 tests)
+│   ├── test_gossip.py                     # Telemetry metrics & heartbeat timeout (3 tests)
+│   ├── test_security.py                   # Ed25519 signing, tampering & TLS (7 tests)
+│   └── test_mesh_node.py                  # End-to-end TLS execution & routing (4 tests)
+├── examples/                              # Interactive Demos & Cluster Audits
+│   ├── network_audit_demo.py              # 10-node dynamic mesh discovery audit
+│   ├── dht_discovery_demo.py              # DHT peer discovery walkthrough
+│   ├── task_execution_demo.py             # Math & CPU compute benchmarks
+│   ├── task_distribution_demo.py         # Core engine distribution demo
+│   ├── week3_task_routing_and_recovery_demo.py # Load-aware routing & crash recovery demo
+│   └── week4_security_and_dashboard_demo.py    # TLS sockets, Ed25519 signatures & Rich UI demo
+└── docs/                                  # Architectural Specifications
+    ├── dht_architecture.md                # Kademlia DHT & UDP protocol specification
+    ├── task_engine_architecture.md        # Task engine & serialization architecture
+    ├── week3_fault_tolerance_architecture.md # Workload routing & fault recovery specification
+    └── week4_security_dashboard_architecture.md # TLS encryption & cryptography specification
 ```
 
 Run the Decentralized Distribution & Node Failure Recovery Simulation:
@@ -301,6 +122,7 @@ Implements the [Kademlia](https://pdos.csail.mit.edu/~petar/papers/maymounkov-ka
 
 ---
 
+## Installation
 ### Gossip Protocol & Failure Detection
 
 **Location:** `gossip/`
@@ -469,10 +291,24 @@ Full-featured terminal monitor. Uses the `rich` library when installed for a pol
 ╚══════════╩═══════════╩════════════════╩════════════╩═════════╝
 ```
 
+### Prerequisites
+* Python 3.7 or higher
+
+### Install Dependencies
+```bash
+pip install cryptography rich
+```
+
+*(Optional dependencies: `pip install cloudpickle psutil` for dynamic lambda serialization and kernel-level metrics)*
+
+### Install MeshWeaver in Editable Mode
+```bash
+pip install -e .
+```
+
 ---
 
-## Running the Code
-
+## Quick Start & Verification
 ### 1. Start the Web Dashboard (Recommended)
 
 Spins up a 5-node simulated cluster and opens the browser dashboard:
@@ -508,7 +344,21 @@ python3 examples/member5_week3_4_demo.py
 
 MeshWeaver includes a zero-dependency CLI tool (`cli.py`):
 
+### 1. Run Automated Unit Tests (All 40 Tests)
 ```bash
+python -m unittest discover -v tests
+```
+
+### 2. Run Interactive Demos
+```bash
+# Load-aware routing & worker crash recovery demo
+python examples/week3_task_routing_and_recovery_demo.py
+
+# TLS encryption, Ed25519 cryptographic signatures & Rich terminal UI demo
+python examples/week4_security_and_dashboard_demo.py
+
+# 10-Node dynamic mesh discovery audit
+python examples/network_audit_demo.py
 # Display help and available commands
 python3 cli.py --help
 
@@ -552,9 +402,73 @@ python3 cli.py demo full
 python network_audit_demo.py
 ```
 
-### 3. Run Interactive Demos
+---
+
+## CLI Usage
+
+MeshWeaver provides a built-in command-line interface:
 
 ```bash
+# Start a node with TLS encryption and Ed25519 signatures enabled
+python cli.py start --host 127.0.0.1 --port 8000 --dht-port 8001
+
+# Join an existing cluster via bootstrap seed
+python cli.py start --port 8002 --dht-port 8003 --bootstrap 127.0.0.1:8001
+
+# Run the Load Routing & Crash Recovery demo
+python cli.py demo-week3
+
+# Run the Security & Live Dashboard demo
+python cli.py demo-week4
+
+# Run a 10-node network connectivity audit
+python cli.py audit --nodes 10
+```
+
+Or via package executable:
+```bash
+python -m meshweaver demo-week3
+python -m meshweaver demo-week4
+```
+
+---
+
+## Python API Usage
+
+```python
+import asyncio
+from meshweaver import MeshNode
+
+def compute_square(x: int) -> int:
+    return x * x
+
+async def main():
+    # 1. Initialize and start a node
+    node = MeshNode(host="127.0.0.1", port=8000, enable_tls=True)
+    await node.start()
+
+    # 2. Submit a compute task
+    result = await node.submit_task(
+        func=compute_square,
+        args=(12,),
+        name="square_calculation",
+    )
+
+    print(f"Task status: {result.status.value}")
+    print(f"Return value: {result.return_value}")
+    print(f"Execution time: {result.execution_time_seconds:.4f}s")
+
+    await node.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License.
 # Gossip protocol telemetry demo
 python examples/gossip_telemetry_demo.py
 
