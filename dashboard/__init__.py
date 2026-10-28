@@ -5,8 +5,10 @@ and failure detection telemetry using Rich terminal components.
 """
 
 from .cli import DashboardEventLogger, RichTerminalDashboard
+from .web_server import MeshWeaverWebServer
 
 __all__ = [
     "DashboardEventLogger",
     "RichTerminalDashboard",
+    "MeshWeaverWebServer",
 ]
