@@ -136,5 +136,158 @@ class TestMember5Week2Deliverables(unittest.IsolatedAsyncioTestCase):
         self.assertIn("50.0%", bar_50)
 
 
+class TestMember5Week3Deliverables(unittest.TestCase):
+    """
+    Validates Member 5 Week 3 responsibilities:
+    - Fault Tolerance & Heartbeat Failure Detection
+    - Dynamic Gossip Telemetry feeding Lowest-CPU Task Routing
+    - Automatic Orphaned Task Recovery & Re-routing upon Node Dropout
+    """
+
+    def test_gossip_telemetry_feeds_lowest_cpu_task_router(self):
+        """Gossip updates automatically inform TaskRouter for lowest-CPU task selection."""
+        monitor = GossipMonitor(local_node_id="gateway")
+        from scheduler.router import TaskRouter, RoutingStrategy
+        from task.models import Task
+
+        router = TaskRouter(local_node_id="gateway")
+        monitor.sync_with_task_router(router)
+
+        # Simulate gossip metrics update: worker_busy (80% CPU), worker_idle (15% CPU)
+        m_busy = NodeMetrics(node_id="worker_busy", cpu_percent=80.0)
+        m_idle = NodeMetrics(node_id="worker_idle", cpu_percent=15.0)
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(monitor.handle_incoming_message(
+                GossipMessage(sender_id="worker_busy", message_type=GossipMessageType.METRICS_UPDATE, payload={"metrics": m_busy.to_dict()})
+            ))
+            loop.run_until_complete(monitor.handle_incoming_message(
+                GossipMessage(sender_id="worker_idle", message_type=GossipMessageType.METRICS_UPDATE, payload={"metrics": m_idle.to_dict()})
+            ))
+        finally:
+            loop.close()
+
+        task = Task(name="compute_workload", payload=b"math")
+        selected = router.select_worker(task, strategy=RoutingStrategy.LOWEST_CPU)
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.node_id, "worker_idle")
+        self.assertEqual(selected.cpu_percent, 15.0)
+
+    def test_heartbeat_monitor_triggers_automatic_task_rerouting(self):
+        """Heartbeat monitor triggers dropout event, automatically re-routing orphaned tasks."""
+        from scheduler.router import TaskRouter
+        from scheduler.reliability import ReliabilityManager
+        from task.models import Task, TaskStatus
+
+        monitor = GossipMonitor(local_node_id="hub", gossip_interval=1.0, heartbeat_timeout=2.0)
+        router = TaskRouter(local_node_id="hub")
+        reliability = ReliabilityManager()
+
+        monitor.sync_with_task_router(router)
+        monitor.sync_with_reliability_manager(reliability, router)
+
+        router.update_worker_metrics("worker_active", cpu_percent=20.0)
+        router.update_worker_metrics("worker_backup", cpu_percent=30.0)
+
+        peer = monitor.add_peer("worker_active")
+        monitor.add_peer("worker_backup")
+
+        # Assign task to worker_active
+        task = Task(name="monte_carlo", payload=b"calc", max_retries=2)
+        reliability.assign_task(task, "worker_active")
+
+        # Worker crashes (heartbeat expires)
+        peer.last_heartbeat_time = time.time() - 3.0
+        monitor.check_peer_health()
+
+        # Task must have been automatically re-routed to worker_backup!
+        assignment = reliability._active_leases.get(task.task_id)
+        self.assertIsNotNone(assignment)
+        self.assertEqual(assignment.worker_node_id, "worker_backup")
+        self.assertEqual(task.retry_count, 1)
+
+
+class TestMember5Week4Deliverables(unittest.TestCase):
+    """
+    Validates Member 5 Week 4 responsibilities:
+    - Real-Time Mesh Topology Visualization in Dashboard
+    - Live Task Execution State (Active Leases, Retries, Dead-Letter Queue)
+    - Cryptographic Security & TLS Transport Status Integration
+    """
+
+    def test_dashboard_real_time_mesh_topology_visualization(self):
+        """Dashboard renders real-time mesh topology, link latency, and TLS encryption badges."""
+        monitor = GossipMonitor(local_node_id="hub_alpha", host="127.0.0.1", port=9000)
+        p1 = monitor.add_peer("node_beta", host="127.0.0.1", port=9001)
+        p1.round_trip_time_ms = 2.4
+        p1.is_tls = True
+
+        dash = RichTerminalDashboard(monitor=monitor)
+        snapshot = dash.render_snapshot()
+
+        self.assertIn("Mesh Topology", snapshot)
+        self.assertIn("hub_alpha", snapshot)
+        self.assertIn("node_beta", snapshot)
+        self.assertIn("2.4ms", snapshot)
+        self.assertIn("TLS", snapshot)
+
+    def test_dashboard_live_task_execution_state_and_dlq(self):
+        """Dashboard displays in-flight leased tasks and dead-letter queue entries."""
+        from scheduler.router import TaskRouter
+        from scheduler.reliability import ReliabilityManager
+        from task.models import Task
+
+        monitor = GossipMonitor(local_node_id="hub_dash")
+        router = TaskRouter(local_node_id="hub_dash")
+        reliability = ReliabilityManager()
+
+        # 1. In-flight task
+        task1 = Task(name="active_prime_sieve", payload=b"", origin_node_id="hub_dash")
+        task1.signature = "sig_hmac_valid"
+        reliability.assign_task(task1, "worker_node_01")
+
+        # 2. Dead-letter task
+        task2 = Task(name="failed_calc", payload=b"", max_retries=0)
+        reliability.assign_task(task2, "worker_node_02")
+        reliability.record_failure_and_retry(task2.task_id, "Fatal out of memory", router)
+
+        dash = RichTerminalDashboard(monitor=monitor, router=router, reliability=reliability)
+        snapshot = dash.render_snapshot()
+
+        self.assertIn("Live Task Execution", snapshot)
+        self.assertIn("active_prime_sieve", snapshot)
+        self.assertIn("worker_node_01", snapshot)
+        self.assertIn("DEAD-LETTER", snapshot)
+        self.assertIn("failed_calc", snapshot)
+
+    def test_tls_certificates_and_cryptographic_signatures(self):
+        """Validates TLS self-signed cert generation and HMAC-SHA256 task signing."""
+        from security.tls import generate_self_signed_cert
+        from security.crypto import sign_task_request, verify_task_request, SignatureVerificationError
+        from task.models import Task
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cert, key = generate_self_signed_cert(
+                os.path.join(tmpdir, "test.crt"),
+                os.path.join(tmpdir, "test.key"),
+                common_name="test_node"
+            )
+            self.assertTrue(os.path.exists(cert))
+            self.assertTrue(os.path.exists(key))
+
+        task = Task(name="secure_workload", payload=b"secret_bytes")
+        secret = b"cluster_secret_key_123"
+        sign_task_request(task, secret, "signer_node")
+        self.assertIsNotNone(task.signature)
+        self.assertTrue(verify_task_request(task, secret))
+
+        # Tampering is detected
+        task.payload = b"tampered_bytes"
+        with self.assertRaises(SignatureVerificationError):
+            verify_task_request(task, secret)
+
+
 if __name__ == "__main__":
     unittest.main()

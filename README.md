@@ -1,145 +1,210 @@
-# MeshWeaver: Zero-Dependency P2P Async Task Broker
-## Core Networking Layer (Member 2: P2P Networking Developer)
+# MeshWeaver: P2P Async Task Broker
+
+MeshWeaver is a lightweight, decentralized peer-to-peer task broker written in Python. It avoids the need for central infrastructure (like Redis or RabbitMQ) by letting nodes form an asyncio-based mesh network where tasks are cryptographically authenticated, routed based on lowest CPU load, and automatically re-routed if a worker crashes.
 
 ---
 
-## 📌 Overview
+## What is in this Repository
 
-This repository contains the core networking subsystem for **MeshWeaver: Zero-Dependency P2P Async Task Broker**.
+This repository contains the complete implementation for **Weeks 1, 2, 3, and 4** of the MeshWeaver Decentralized Task Broker:
 
-As **Member 2 (P2P Networking Developer)**, the goal was to design and implement a high-performance, asynchronous TCP communication layer built **strictly on Python's standard library** (zero external dependencies, zero `pip` packages).
+### Week 1 — Mesh Setup, Pings & Task Serialization
+- **`task/models.py`**: Distributed unit of work model with lifecycle tracking (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `TIMEOUT`).
+- **`task/serializer.py`**: Binary function packaging with `cloudpickle` (falling back to standard library `pickle`), SHA-256 integrity checksums, and pre-packaged benchmarks.
+- **`gossip/models.py`**: Wire-level heartbeat ping envelopes (`HEARTBEAT`, `METRICS_UPDATE`).
+- **`gossip/metrics.py`**: Zero-dependency hardware telemetry collector (`psutil` fallback to POSIX `/proc` and `os.getloadavg`).
 
-This networking layer serves as the communication foundation upon which the **Distributed Hash Table (DHT)** and **Gossip / Task Broker** modules interface.
+### Week 2 — Periodic Gossip Telemetry & Failure Detection
+- **`gossip/monitor.py`**: Epidemic gossip engine broadcasting CPU/RAM loads to $k=3$ neighbors every 5.0 seconds.
+- **`gossip/models.py`**: Anti-entropy digest vector reconciliation (`GossipDigest`, `GOSSIP_DELTA`).
+- **`gossip/monitor.py`**: Two-tier heartbeat failure detector (`HEALTHY` $\to$ `SUSPECT` $\to$ `DEAD`).
+
+### Week 3 — Task Routing & Fault Tolerance
+- **`scheduler/router.py`**: Load-aware routing algorithm selecting the specific node with the lowest reported CPU load across the mesh (`LOWEST_CPU`, composite scoring, exclusion set during retries).
+- **`scheduler/reliability.py`**: Active task lease management, automated orphaned task capture, and dynamic re-assignment upon worker dropout.
+- **`scheduler/reliability.py`**: Bounded retry enforcement and Dead-Letter Queue (DLQ) isolation for permanently failing tasks.
+- **Fault Recovery Bridge**: Connects `GossipMonitor` dropout events directly to `ReliabilityManager.handle_worker_dropout` for zero-data-loss workload recovery.
+
+### Week 4 — TLS/SSL Security, Cryptographic Signatures & Live Dashboard
+- **`security/tls.py`**: Transport Layer Security (TLS/SSL) wrapping with automatic X.509 self-signed certificate generation (RSA 2048-bit) and modern cipher suite negotiation.
+- **`security/crypto.py`**: Cryptographic message authentication using HMAC-SHA256. Signs every task request and validates payload integrity before execution, blocking forged or tampered workloads and preventing replay attacks.
+- **`dashboard/cli.py`**: Real-time CLI Terminal Dashboard featuring:
+  - **Real-Time Mesh Topology**: Inter-node link graph, endpoints, TLS security badges (`🔒 TLS`), and RTT link latencies.
+  - **Live Task Execution State**: In-flight leased tasks, assigned workers, retry counters, and Dead-Letter Queue (DLQ) inspection.
+  - **Telemetry Meters**: Visual progress bars (`[████░░░░░░]`) for CPU% and RAM% across all nodes.
+  - **Cluster Event Log**: Timestamped alerts for node join, routing decisions, heartbeats, and security rejections.
+- **`network/`**: Framed binary network protocol and asynchronous TCP/TLS client/server transports with in-memory virtual routing for sandboxed environments.
+- **`mesh/node.py`**: Unified `MeshNode` orchestrating execution, routing, reliability, gossip, TLS networking, and cryptographic security.
+- **`cli.py` & `setup.py`**: Production-ready command-line interface and packaging for edge computing environments.
 
 ---
 
-## 🏗️ Architecture & Key Design Decisions
-
-### 1. Length-Prefixed Framing (TCP Anti-Fragmentation)
-TCP is a byte-stream protocol without intrinsic message boundary semantics. A single message may be split across multiple TCP packets (fragmentation), or multiple small messages may be batched into a single packet (stream coalescing).
-
-To prevent message corruption and truncation:
-* Every message is preceded by a **4-byte fixed-size header** formatted as an unsigned 32-bit big-endian integer (`!I` via `struct.pack`).
-* The header indicates the exact byte length of the upcoming payload.
-* The payload is a UTF-8 encoded JSON string.
-* `read_message()` uses `asyncio.StreamReader.readexactly()`:
-  * First reads exactly 4 bytes for the header.
-  * Then reads exactly $N$ bytes for the payload.
-* A security limit of **16 MB (`MAX_PAYLOAD_SIZE`)** prevents malicious or malformed packets from causing Out-Of-Memory (OOM) denial-of-service.
+## Directory Structure
 
 ```
-+------------------------------------+-------------------------------------------+
-| Header: 4 Bytes (struct '!I')      | Payload: N Bytes (UTF-8 JSON string)      |
-| Length of Payload in Big-Endian    | {"type": "PING", "sender_id": "node_01"}  |
-+------------------------------------+-------------------------------------------+
+MeshWeaver/
+├── cli.py                          # Unified CLI entrypoint (nodes, submit, dashboard, demos)
+├── setup.py                        # Python packaging configuration for edge deployment
+├── config.py                       # Global settings (ports, timeouts, TLS, HMAC secrets)
+├── mesh/                           # Unified P2P Mesh Node Orchestrator
+│   ├── __init__.py
+│   └── node.py                     # MeshNode implementation
+├── security/                       # Week 4 Security & Cryptography Layer
+│   ├── __init__.py
+│   ├── tls.py                      # TLS/SSL context management & X.509 cert generation
+│   └── crypto.py                   # HMAC-SHA256 task request signing & replay prevention
+├── network/                        # Asynchronous Networking Transport & Wire Framing
+│   ├── __init__.py
+│   ├── protocol.py                 # Binary framed NetworkPacket definitions
+│   └── transport.py                # Asyncio TCP/TLS MeshServer, MeshClient & In-Memory Router
+├── scheduler/                      # Week 3 Task Router & Reliability Subsystem
+│   ├── __init__.py
+│   ├── router.py                   # Lowest-CPU workload selection & composite load scoring
+│   └── reliability.py              # Lease tracking, dropout re-routing & Dead-Letter Queue
+├── task/                           # Task Engine & Serialization Subsystem
+│   ├── __init__.py
+│   ├── models.py                   # Task and TaskResult lifecycle models
+│   ├── serializer.py               # Cloudpickle/pickle serialization & SHA-256 integrity
+│   └── executor.py                 # Async isolated worker pools with execution timeouts
+├── gossip/                         # Gossip Protocol, Telemetry & Failure Detection
+│   ├── __init__.py
+│   ├── metrics.py                  # Zero-dependency CPU/RAM hardware sampling
+│   ├── models.py                   # PeerNodeRecord, GossipMessage, NodeMetrics, Digest
+│   └── monitor.py                  # 5s gossip loop & two-tier heartbeat failure detector
+├── dashboard/                      # Real-Time Terminal Dashboard
+│   ├── __init__.py
+│   └── cli.py                      # Mesh topology visualizer & task execution state table
+├── tests/                          # Comprehensive Automated Test Suites (91 Unit Tests)
+│   ├── test_week3_routing_fault_tolerance.py  # Week 3 dedicated test suite
+│   ├── test_week4_security_dashboard.py       # Week 4 dedicated test suite
+│   ├── test_mesh_node_integration.py          # End-to-end multi-node mesh integration tests
+│   ├── test_member5_gossip.py                 # Member 5 all-weeks test runner
+│   ├── test_member4_tasks.py                  # Member 4 test runner
+│   ├── test_tasks.py                          # Serialization & execution unit tests
+│   ├── test_scheduler.py                      # Scheduler routing & reliability tests
+│   ├── test_gossip.py                         # Metrics sampling & gossip protocol tests
+│   └── test_health.py                         # Heartbeat state machine & dropout tests
+├── examples/                       # Executable Demonstrations
+│   ├── week3_routing_demo.py                  # Week 3 Lowest-CPU Routing & Crash Recovery Demo
+│   ├── week4_security_demo.py                 # Week 4 TLS, HMAC-SHA256 & Topology Dashboard Demo
+│   ├── week3_4_full_mesh_demo.py              # Complete Weeks 1-4 End-to-End Cluster Demo
+│   ├── member5_week3_4_demo.py                # Member 5 Weeks 3 & 4 Milestone Demo
+│   ├── week1_2_gossip_demo.py                 # Weeks 1 & 2 Milestone Demo
+│   ├── gossip_dashboard_demo.py               # Live Terminal Dashboard Demo
+│   ├── member5_demo.py                        # Member 5 Demo Launcher
+│   ├── member4_demo.py                        # Member 4 Demo Launcher
+│   ├── task_distribution_demo.py              # Workload Distribution Demo
+│   └── task_execution_demo.py                 # Workload Packaging Demo
+└── docs/                           # Architectural Documentation & Specifications
+    ├── week3_week4_architecture.md            # Weeks 3 & 4 Comprehensive Architecture
+    ├── gossip_fault_tolerance_architecture.md # Gossip & Failure Detection Architecture
+    ├── member5_interface.md                   # Member 5 Interface Specification
+    └── task_engine_architecture.md            # Task Engine Architecture Specification
 ```
 
 ---
 
-### 2. Fully Asynchronous TCP Server (`P2PServer`)
-* Built directly using `asyncio.start_server`.
-* Supports dynamic ephemeral ports (`port=0`), exposing `actual_port` for deterministic testing.
-* **Continuous Streaming Loop**: Keeps socket connections alive and continuously reads framed messages until the remote peer cleanly disconnects.
-* **Adaptive Callback Dispatching**: The `message_handler` callback can be:
-  * Asynchronous (`async def`) or synchronous (`def`).
-  * 1-argument (`handler(message)`) or 2-argument (`handler(message, peer_address)`).
-* **Graceful Teardown**: `stop()` gracefully signals the listening server to stop accepting new peers, and iterates through active socket connections to close them cleanly.
+## How to Run
+
+### 1. Run Automated Unit Tests
+
+Run all 91 unit tests across all project milestones:
+```bash
+python3 -m unittest discover tests
+```
+
+Run Week 3's dedicated test suite (Routing & Fault Tolerance):
+```bash
+python3 -m unittest tests/test_week3_routing_fault_tolerance.py
+```
+
+Run Week 4's dedicated test suite (TLS, Cryptographic Signatures & Topology Dashboard):
+```bash
+python3 -m unittest tests/test_week4_security_dashboard.py
+```
+
+Run the End-to-End Multi-Node Integration test suite:
+```bash
+python3 -m unittest tests/test_mesh_node_integration.py
+```
+
+Run Member 5's comprehensive test runner (Weeks 1, 2, 3, and 4):
+```bash
+python3 -m unittest tests/test_member5_gossip.py
+```
 
 ---
 
-### 3. Fault-Tolerant TCP Client (`P2PClient`)
-* Connects to target peers, transmits framed messages, awaits a single response, and cleanly shuts down the socket.
-* **Strict Timeout Boundaries**: Every network roundtrip is guarded by `asyncio.wait_for(...)`.
-* **Silent Error Recovery**: Catches `ConnectionRefusedError`, `TimeoutError`, and `OSError` (e.g. offline peer, network partition, packet loss), logs descriptive warnings, and returns `None` instead of raising unhandled exceptions that could crash the node.
-* **One-Shot Convenience Method**: Provides `P2PClient.send_to(host, port, message_dict, timeout=5.0)` for ad-hoc RPC queries, heartbeats, and gossip dissemination without managing client lifecycles manually.
+### 2. Run the Demos
+
+#### Complete Multi-Node Cluster Demo (Weeks 1, 2, 3 & 4)
+Simulates a 4-node cluster with TLS and HMAC signing, exchanges telemetry, routes tasks to the lowest-CPU node, recovers from a simulated worker crash, and displays the dashboard:
+```bash
+python3 examples/week3_4_full_mesh_demo.py
+```
+
+#### Week 3 Milestone Demo (Lowest-CPU Routing & Fault Tolerance)
+Demonstrates load-aware routing selecting the lowest CPU peer, worker dropout detection, automatic task reassignment, and Dead-Letter Queue (DLQ) bounded retry isolation:
+```bash
+python3 examples/week3_routing_demo.py
+```
+
+#### Week 4 Milestone Demo (TLS Transport, HMAC Signatures & Live Dashboard)
+Demonstrates X.509 certificate generation, encrypted transport handshake, HMAC-SHA256 task signing, adversary tamper rejection, replay protection, and the live mesh topology dashboard:
+```bash
+python3 examples/week4_security_demo.py
+```
+
+#### Member 5 Weeks 3 & 4 Demo
+Demonstrates Member 5's failure detection bridge and real-time topology dashboard:
+```bash
+python3 examples/member5_week3_4_demo.py
+```
 
 ---
 
-## 📂 File Deliverables
+### 3. Using the MeshWeaver CLI
 
-| File | Path | Description |
-| :--- | :--- | :--- |
-| **`network/protocol.py`** | [network/protocol.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/protocol.py) | `MessageProtocol` class with `encode_message` and `read_message`. |
-| **`network/server.py`** | [network/server.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/server.py) | `P2PServer` class using `asyncio.start_server` with client session management. |
-| **`network/client.py`** | [network/client.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/client.py) | `P2PClient` class with `asyncio.wait_for` timeout protection and error handling. |
-| **`network/__init__.py`** | [network/__init__.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/network/__init__.py) | Package initialization exporting `MessageProtocol`, `P2PServer`, and `P2PClient`. |
-| **`tests/test_network.py`** | [tests/test_network.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/tests/test_network.py) | Comprehensive `unittest` suite covering fragmentation, timeouts, and roundtrips. |
-| **`example_node.py`** | [example_node.py](file:///p:/INFOTATCT%20PROJECT/MeshWeaver/example_node.py) | End-to-end executable script simulating two peers interacting over loopback. |
-
----
-
-## 🚀 Running the Code
-
-### 1. Run the End-to-End Demo
-Executes a simulated peer node (`Node Alpha` server on port `9001`) and a client peer (`Node Beta`), performing:
-* Ping / Pong health checks.
-* DHT routing queries.
-* Asynchronous task execution requests.
-* Offline peer error handling (`ConnectionRefusedError` tolerance).
+MeshWeaver includes a zero-dependency CLI tool (`cli.py`):
 
 ```bash
-python example_node.py
-```
+# Display help and available commands
+python3 cli.py --help
 
-### 2. Run the Unit & Integration Tests
-Uses Python's standard library `unittest` and `unittest.IsolatedAsyncioTestCase`:
+# Generate self-signed TLS certificates for a node
+python3 cli.py certs --node-id node_alpha
 
-```bash
-python -m unittest tests/test_network.py
-```
+# View the real-time cluster dashboard
+python3 cli.py dashboard --node-id my_node --peer worker1:8001 --peer worker2:8002
 
----
-
-## 🤝 Integration Guide for Team Members
-
-### How Member 1 (DHT Module) Integrates:
-```python
-from network import P2PClient
-
-async def find_closest_nodes(target_node_id: str, peer_host: str, peer_port: int):
-    query = {
-        "type": "DHT_FIND_NODE",
-        "target_id": target_node_id,
-        "sender_id": "local_node_id",
-    }
-    
-    # One-shot RPC with a 3.0 second timeout
-    response = await P2PClient.send_to(peer_host, peer_port, query, timeout=3.0)
-    
-    if response and response.get("type") == "DHT_NODES_FOUND":
-        return response.get("closest_peers", [])
-    
-    # Peer is offline or timed out; remove or deprioritize in routing table
-    return []
-```
-
-### How Member 3 (Gossip / Task Broker) Integrates:
-```python
-import asyncio
-from network import P2PServer
-
-async def task_broker_router(message: dict, sender_addr: tuple) -> dict:
-    msg_type = message.get("type")
-    
-    if msg_type == "TASK_SUBMIT":
-        task_id = message["task"]["id"]
-        # Enqueue task into internal async queue
-        return {"status": "ACCEPTED", "task_id": task_id}
-        
-    elif msg_type == "GOSSIP_DIGEST":
-        # Merge remote peer state into local membership view
-        return {"status": "ACK", "digest_received": True}
-        
-    return {"status": "ERROR", "message": "Unknown type"}
-
-# Start peer server listening for incoming mesh messages
-server = P2PServer(host="0.0.0.0", port=8000, message_handler=task_broker_router)
-await server.start()
+# Run any project milestone demonstration
+python3 cli.py demo week3
+python3 cli.py demo week4
+python3 cli.py demo full
 ```
 
 ---
 
-## 🔒 Dependencies
-* **Python**: $\ge$ 3.8
-* **External Dependencies**: **None** (100% standard library)
-#
+## Deliverables Matrix (Weeks 1, 2, 3 & 4)
+
+| Week | Project Requirement | Implementation | Automated Verification |
+|---|---|---|---|
+| **Week 1** | Peer heartbeat ping / socket communication | `gossip/models.py` (`HEARTBEAT` message type) | `test_heartbeat_ping_wire_serialization` |
+| **Week 1** | Hardware telemetry metrics sampling (CPU/RAM) | `gossip/metrics.py` (`SystemMetricsCollector`) | `test_metrics_collection_baseline` |
+| **Week 1** | Task serialization with SHA-256 verification | `task/serializer.py` (`TaskSerializer`) | `test_serialize_and_deserialize_callable` |
+| **Week 2** | Periodic gossip loop sharing CPU/RAM every 5s | `gossip/monitor.py` (`_gossip_loop`, 5s interval) | `test_periodic_metrics_broadcast_and_receipt` |
+| **Week 2** | Anti-entropy state digest synchronization | `gossip/models.py` (`GossipDigest`, delta sync) | `test_anti_entropy_digest_and_delta` |
+| **Week 2** | Two-tier failure detector (`HEALTHY` $\to$ `SUSPECT` $\to$ `DEAD`) | `gossip/monitor.py` (`check_peer_health`) | `test_transition_to_dead` |
+| **Week 3** | Workload routing to node with lowest reported CPU | `scheduler/router.py` (`RoutingStrategy.LOWEST_CPU`) | `test_routing_selects_lowest_cpu_node` |
+| **Week 3** | Dynamic telemetry adaptation & failure exclusion | `scheduler/router.py` (`update_worker_metrics`, `exclude`) | `test_routing_dynamic_load_update` |
+| **Week 3** | Continuous heartbeat failure monitor | `gossip/monitor.py` (`check_peer_health`) | `test_worker_dropout_detection` |
+| **Week 3** | Automatic task recovery & re-routing on crash | `scheduler/reliability.py` (`handle_worker_dropout`) | `test_automatic_task_rerouting_on_worker_dropout` |
+| **Week 3** | Bounded retry limits & Dead-Letter Queue (DLQ) | `scheduler/reliability.py` (`record_failure_and_retry`) | `test_retry_exhaustion_moves_task_to_dead_letter_queue` |
+| **Week 4** | TLS/SSL node communication wrapping | `security/tls.py` (`create_server_ssl_context`, `MemoryBIO`) | `test_in_memory_tls_handshake_and_encryption` |
+| **Week 4** | X.509 self-signed certificate generation | `security/tls.py` (`generate_self_signed_cert`) | `test_x509_certificate_generation` |
+| **Week 4** | Cryptographic signatures for task execution requests | `security/crypto.py` (`sign_task_request`, HMAC-SHA256) | `test_sign_and_verify_valid_task` |
+| **Week 4** | Tampering detection & forged task rejection | `security/crypto.py` (`verify_task_request`) | `test_tamper_detection_on_payload` |
+| **Week 4** | Anti-replay attack timestamp enforcement | `security/crypto.py` (`verify_task_request`, 60s window) | `test_replay_attack_rejection` |
+| **Week 4** | Real-time mesh topology view in CLI dashboard | `dashboard/cli.py` (`RichTerminalDashboard`) | `test_dashboard_renders_mesh_topology` |
+| **Week 4** | Live task execution state table (leases, retries, DLQ) | `dashboard/cli.py` (`RichTerminalDashboard`) | `test_dashboard_renders_task_execution_state` |
+| **Review**| Pure Python package ready for edge deployment | `setup.py`, `cli.py`, `mesh/node.py` | `test_end_to_end_lowest_cpu_routing_and_execution` |

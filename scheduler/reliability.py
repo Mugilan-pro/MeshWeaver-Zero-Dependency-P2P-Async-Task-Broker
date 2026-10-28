@@ -1,7 +1,6 @@
 """
-MeshWeaver Reliability Subsystem
-Manages in-flight task leases, detects node dropouts, enforces bounded retry limits,
-and automatically reassigns orphaned tasks to healthy peers.
+Reliability and lease management for distributed tasks.
+Tracks active leases, detects worker dropouts, and handles task retries and dead-lettering.
 """
 
 from __future__ import annotations
@@ -66,6 +65,18 @@ class ReliabilityManager:
     def dead_letter_count(self) -> int:
         """Number of tasks that exhausted all retry attempts."""
         return len(self._dead_letter_tasks)
+
+    def get_active_leases(self) -> List[TaskAssignment]:
+        """Returns list of currently active in-flight task leases."""
+        return list(self._active_leases.values())
+
+    def get_completed_results(self) -> Dict[str, TaskResult]:
+        """Returns map of completed task IDs to their results."""
+        return dict(self._completed_results)
+
+    def get_dead_letter_tasks(self) -> List[Tuple[Task, str]]:
+        """Returns list of permanently failed tasks and their error reasons."""
+        return list(self._dead_letter_tasks.values())
 
     def assign_task(
         self,
