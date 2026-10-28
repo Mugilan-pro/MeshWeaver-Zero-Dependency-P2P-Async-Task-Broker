@@ -1,160 +1,80 @@
 """
-network/protocol.py
-Part of MeshWeaver: Zero-Dependency P2P Async Task Broker
-Role: Member 2 (P2P Networking Developer)
-
-Implements length-prefixed message framing over TCP streams using standard library only.
-Prefixes all JSON payloads with a 4-byte big-endian unsigned integer indicating payload length.
-This completely prevents TCP fragmentation and stream coalescing issues.
+Packet wire protocol and framing for TCP/TLS communication.
 """
 
-import asyncio
+from __future__ import annotations
+
+import enum
 import json
-import logging
 import struct
-from typing import Any, Dict, Optional
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
-logger = logging.getLogger("MeshWeaver.Network.Protocol")
+FRAME_HEADER_FORMAT = "!I"  # 4-byte unsigned integer (big-endian) for payload length
+MAX_FRAME_SIZE = 16 * 1024 * 1024  # 16 MB maximum single message
 
 
-class MessageProtocol:
-    """
-    Handles framing, encoding, and decoding of peer-to-peer network messages.
+class ProtocolMessageType(str, enum.Enum):
+    TASK_SUBMISSION = "TASK_SUBMISSION"
+    TASK_RESULT = "TASK_RESULT"
+    HEARTBEAT = "HEARTBEAT"
+    METRICS_UPDATE = "METRICS_UPDATE"
+    PING = "PING"
+    PONG = "PONG"
+    ERROR = "ERROR"
 
-    Framing Structure:
-    +-----------------------------+------------------------------------+
-    | Header: 4 bytes ('!I')      | Payload: N bytes (UTF-8 JSON)      |
-    | (Unsigned 32-bit big-endian)|                                    |
-    +-----------------------------+------------------------------------+
-    """
 
-    # 4-byte unsigned integer in network byte order (big-endian)
-    HEADER_FORMAT: str = "!I"
-    HEADER_SIZE: int = struct.calcsize(HEADER_FORMAT)  # Exactly 4 bytes
+@dataclass
+class NetworkPacket:
+    """Wire envelope for network transmission."""
+    message_type: ProtocolMessageType
+    sender_id: str
+    payload: Dict[str, Any] = field(default_factory=dict)
+    binary_data: Optional[bytes] = None
+    timestamp: float = field(default_factory=time.time)
+    signature: Optional[str] = None
 
-    # Safety limit: 16 MB maximum message payload to prevent memory exhaustion / DoS
-    MAX_PAYLOAD_SIZE: int = 16 * 1024 * 1024
-
-    @staticmethod
-    async def encode_message(data_dict: Dict[str, Any]) -> bytes:
+    def encode(self) -> bytes:
         """
-        Asynchronously serializes a Python dictionary to JSON UTF-8 bytes and
-        prefixes it with a 4-byte big-endian length header.
-
-        Args:
-            data_dict: Dictionary containing the payload to transmit.
-
-        Returns:
-            bytes: The complete wire-ready frame (4-byte header + UTF-8 JSON payload).
-
-        Raises:
-            TypeError: If data_dict is not JSON serializable.
-            ValueError: If payload length exceeds MAX_PAYLOAD_SIZE.
+        Encodes packet into framed byte buffer:
+        [4-byte total length][JSON metadata length: 4-byte][JSON metadata bytes][Binary data]
         """
-        return MessageProtocol.encode_message_sync(data_dict)
+        meta = {
+            "type": self.message_type.value,
+            "sender_id": self.sender_id,
+            "payload": self.payload,
+            "timestamp": self.timestamp,
+            "signature": self.signature,
+            "has_binary": self.binary_data is not None,
+        }
+        meta_bytes = json.dumps(meta).encode("utf-8")
+        bin_bytes = self.binary_data or b""
 
-    @staticmethod
-    def encode_message_sync(data_dict: Dict[str, Any]) -> bytes:
-        """
-        Synchronous utility to encode a message dictionary into framed bytes.
-        Useful when preparing messages outside of coroutine contexts.
+        total_body = struct.pack("!I", len(meta_bytes)) + meta_bytes + bin_bytes
+        frame = struct.pack(FRAME_HEADER_FORMAT, len(total_body)) + total_body
+        return frame
 
-        Args:
-            data_dict: Dictionary containing the payload.
+    @classmethod
+    def decode(cls, frame_body: bytes) -> NetworkPacket:
+        """Decodes raw framed body (excluding the 4-byte length prefix)."""
+        if len(frame_body) < 4:
+            raise ValueError("Frame body too short to contain metadata length")
 
-        Returns:
-            bytes: Framed bytes ready for writer.write().
-        """
-        # Serialize to JSON with UTF-8 encoding
-        payload_bytes = json.dumps(data_dict, ensure_ascii=False).encode("utf-8")
-        payload_length = len(payload_bytes)
+        meta_len = struct.unpack("!I", frame_body[:4])[0]
+        meta_end = 4 + meta_len
+        if len(frame_body) < meta_end:
+            raise ValueError("Frame body truncated: missing metadata bytes")
 
-        if payload_length > MessageProtocol.MAX_PAYLOAD_SIZE:
-            raise ValueError(
-                f"Payload size ({payload_length} bytes) exceeds maximum "
-                f"allowed limit ({MessageProtocol.MAX_PAYLOAD_SIZE} bytes)."
-            )
+        meta_bytes = frame_body[4:meta_end]
+        binary_data = frame_body[meta_end:] if len(frame_body) > meta_end else None
 
-        # Pack length into 4 bytes big-endian
-        header_bytes = struct.pack(MessageProtocol.HEADER_FORMAT, payload_length)
-        return header_bytes + payload_bytes
-
-    @staticmethod
-    async def read_message(reader: asyncio.StreamReader) -> Optional[Dict[str, Any]]:
-        """
-        Reads a single framed message from an asyncio.StreamReader.
-
-        Guarantees that full messages are assembled by reading the exact length
-        specified in the 4-byte header, resolving TCP stream fragmentation.
-
-        Args:
-            reader: Active asyncio.StreamReader connected to a peer.
-
-        Returns:
-            Optional[Dict[str, Any]]: Parsed JSON dictionary if read successfully,
-                                      or None if the connection dropped, EOF reached,
-                                      or the message was malformed.
-        """
-        # Step 1: Read the 4-byte length prefix header
-        try:
-            header_bytes = await reader.readexactly(MessageProtocol.HEADER_SIZE)
-        except asyncio.IncompleteReadError as exc:
-            if not exc.partial:
-                # Normal EOF: connection closed cleanly before new data
-                logger.debug("Peer closed connection cleanly (EOF at header).")
-                return None
-            logger.warning(
-                "Peer disconnected mid-header: received %d of %d expected bytes.",
-                len(exc.partial),
-                MessageProtocol.HEADER_SIZE,
-            )
-            return None
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, EOFError) as exc:
-            logger.debug("Socket dropped during header read: %s", exc)
-            return None
-
-        # Step 2: Unpack the payload length
-        (payload_length,) = struct.unpack(MessageProtocol.HEADER_FORMAT, header_bytes)
-
-        # Validate payload length bounds
-        if payload_length > MessageProtocol.MAX_PAYLOAD_SIZE:
-            logger.error(
-                "Payload size %d exceeds safety limit (%d bytes). Rejecting frame.",
-                payload_length,
-                MessageProtocol.MAX_PAYLOAD_SIZE,
-            )
-            return None
-
-        if payload_length == 0:
-            logger.warning("Received 0-byte payload frame.")
-            return {}
-
-        # Step 3: Read exactly `payload_length` bytes
-        try:
-            payload_bytes = await reader.readexactly(payload_length)
-        except asyncio.IncompleteReadError as exc:
-            logger.warning(
-                "Peer disconnected mid-payload: expected %d bytes, got %d before EOF.",
-                payload_length,
-                len(exc.partial),
-            )
-            return None
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, EOFError) as exc:
-            logger.debug("Socket dropped during payload read: %s", exc)
-            return None
-
-        # Step 4: Decode UTF-8 and parse JSON
-        try:
-            payload_str = payload_bytes.decode("utf-8")
-            data = json.loads(payload_str)
-            if not isinstance(data, dict):
-                logger.warning(
-                    "Expected JSON object (dict), received %s.", type(data).__name__
-                )
-            return data
-        except UnicodeDecodeError as exc:
-            logger.error("Failed to decode payload as UTF-8: %s", exc)
-            return None
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to parse payload as JSON: %s", exc)
-            return None
+        meta = json.loads(meta_bytes.decode("utf-8"))
+        return cls(
+            message_type=ProtocolMessageType(meta["type"]),
+            sender_id=meta["sender_id"],
+            payload=meta.get("payload", {}),
+            binary_data=binary_data if meta.get("has_binary") else None,
+            timestamp=float(meta.get("timestamp", time.time())),
+            signature=meta.get("signature"),
+        )

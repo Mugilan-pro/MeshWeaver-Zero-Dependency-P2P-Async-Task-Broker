@@ -1,20 +1,23 @@
 """
-network package
-Part of MeshWeaver: Zero-Dependency P2P Async Task Broker
-Role: Member 2 (P2P Networking Developer)
-
-Exports the primary networking primitives:
-- MessageProtocol: Length-prefixed framing and JSON serialization over TCP streams.
-- P2PServer: Asynchronous server for listening and dispatching peer requests.
-- P2PClient: Resilient client for communicating with remote peers with timeout protection.
+MeshWeaver Networking Package
+Asynchronous P2P network transport and wire protocol framing.
 """
 
-from network.protocol import MessageProtocol
-from network.server import P2PServer
-from network.client import P2PClient
+from .protocol import NetworkPacket, ProtocolMessageType
+from .transport import (
+    InMemoryMeshRouter,
+    MeshClient,
+    MeshServer,
+    read_network_packet,
+    write_network_packet,
+)
 
 __all__ = [
-    "MessageProtocol",
-    "P2PServer",
-    "P2PClient",
+    "NetworkPacket",
+    "ProtocolMessageType",
+    "MeshServer",
+    "MeshClient",
+    "InMemoryMeshRouter",
+    "read_network_packet",
+    "write_network_packet",
 ]
