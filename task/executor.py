@@ -2,7 +2,7 @@
 MeshWeaver Task Execution Engine
 Asynchronously executes compute workloads without blocking the asyncio event loop.
 Offloads CPU-bound tasks to worker pools, enforces execution timeouts,
-and records precise performance metrics for gossip telemetry.
+validates cryptographic signatures, and records performance metrics for telemetry.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from .models import Task, TaskResult, TaskStatus
 from .serializer import TaskSerializer
+from .security import TaskVerifier, SecurityError
 
 logger = logging.getLogger("MeshWeaver.TaskExecutor")
 
@@ -33,7 +34,7 @@ def _execute_in_worker_pool(packed_payload: bytes, secret_key: Optional[bytes] =
 class TaskExecutor:
     """
     Asynchronous compute execution engine for MeshWeaver nodes.
-    Maintains concurrency counters to supply live load metrics to the scheduler and gossip engine.
+    Integrates cryptographic security verification and concurrency tracking.
     """
 
     def __init__(
@@ -42,11 +43,13 @@ class TaskExecutor:
         max_workers: Optional[int] = None,
         use_process_pool: bool = False,
         secret_key: Optional[bytes] = None,
+        verifier: Optional[TaskVerifier] = None,
     ) -> None:
         self.node_id = node_id or f"node_{os.getpid()}"
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
         self.use_process_pool = use_process_pool
         self.secret_key = secret_key
+        self.verifier = verifier
 
         # Concurrency & Metric tracking
         self._active_tasks: Dict[str, Task] = {}
@@ -88,7 +91,8 @@ class TaskExecutor:
     async def execute(self, task: Task) -> TaskResult:
         """
         Asynchronously executes a Task object.
-        Enforces timeout bounds and ensures the event loop remains responsive.
+        Enforces cryptographic signature verification, timeout bounds,
+        and ensures the event loop remains responsive.
         """
         if self._is_shutdown:
             return TaskResult.failure(
@@ -96,6 +100,21 @@ class TaskExecutor:
                 error_message="TaskExecutor is shut down",
                 executed_by_node_id=self.node_id,
             )
+
+        # 1. Cryptographic Security Check (Week 4 Requirement)
+        if self.verifier:
+            try:
+                self.verifier.verify(task)
+            except SecurityError as e:
+                err_msg = f"Security verification rejected task: {e}"
+                logger.error(f"[{self.node_id}] {err_msg} (task: {task.task_id[:8]})")
+                task.mark_failed()
+                self._failed_count += 1
+                return TaskResult.failure(
+                    task_id=task.task_id,
+                    error_message=err_msg,
+                    executed_by_node_id=self.node_id,
+                )
 
         task.mark_running()
         self._active_tasks[task.task_id] = task

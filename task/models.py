@@ -120,7 +120,7 @@ class TaskResult:
 class Task:
     """
     Core distributed unit of work within the MeshWeaver mesh network.
-    Encapsulates compute functions, inputs, lifecycle state, and resilience policies.
+    Encapsulates compute functions, inputs, lifecycle state, resilience, and cryptographic signatures.
     """
     name: str
     payload: bytes
@@ -136,6 +136,8 @@ class Task:
     scheduled_at: Optional[float] = None
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
+    signature: Optional[str] = None             # Cryptographic HMAC-SHA256 signature
+    signer_node_id: Optional[str] = None        # ID of the peer that cryptographically signed this task
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def mark_scheduled(self, node_id: str) -> None:
@@ -187,6 +189,8 @@ class Task:
             "scheduled_at": self.scheduled_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "signature": self.signature,
+            "signer_node_id": self.signer_node_id,
             "metadata": self.metadata,
         }
 
@@ -209,5 +213,7 @@ class Task:
             scheduled_at=data.get("scheduled_at"),
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
+            signature=data.get("signature"),
+            signer_node_id=data.get("signer_node_id"),
             metadata=data.get("metadata", {}),
         )

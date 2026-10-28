@@ -1,6 +1,7 @@
 """
 MeshWeaver Task Engine
-Asynchronous task abstraction, high-fidelity serialization, and non-blocking execution.
+Asynchronous task abstraction, high-fidelity serialization, non-blocking execution,
+and cryptographic security verification.
 Part of the MeshWeaver Decentralized Task Broker.
 """
 
@@ -20,6 +21,16 @@ from .serializer import (
 from .executor import (
     TaskExecutor,
 )
+from .security import (
+    TaskSigner,
+    TaskVerifier,
+    SecurityError,
+    MissingSignatureError,
+    UntrustedNodeError,
+    InvalidSignatureError,
+    sign_task,
+    verify_task,
+)
 
 __all__ = [
     "Task",
@@ -32,4 +43,12 @@ __all__ = [
     "SerializationError",
     "IntegrityError",
     "TaskExecutor",
+    "TaskSigner",
+    "TaskVerifier",
+    "SecurityError",
+    "MissingSignatureError",
+    "UntrustedNodeError",
+    "InvalidSignatureError",
+    "sign_task",
+    "verify_task",
 ]
