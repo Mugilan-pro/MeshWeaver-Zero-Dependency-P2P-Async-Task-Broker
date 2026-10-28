@@ -31,9 +31,11 @@ class WorkerNodeInfo:
     node_id: str
     host: str = "127.0.0.1"
     port: int = 8000
-    cpu_percent: float = 0.0          # 0.0 to 100.0%
-    ram_percent: float = 0.0          # 0.0 to 100.0%
-    active_tasks: int = 0             # Number of currently running tasks
+    cpu_percent: float = 0.0              # 0.0 to 100.0%
+    ram_percent: float = 0.0              # 0.0 to 100.0%
+    active_tasks: int = 0                 # Number of currently running tasks
+    max_task_capacity: int = 16           # Max concurrent tasks allowed on this node
+    latency_ms: float = 0.0               # Estimated round-trip latency to this peer
     is_alive: bool = True
     last_heartbeat: float = field(default_factory=time.time)
     heartbeat_timeout_seconds: float = 15.0
@@ -48,27 +50,48 @@ class WorkerNodeInfo:
         return (time.time() - self.last_heartbeat) <= self.heartbeat_timeout_seconds
 
     @property
+    def is_overloaded(self) -> bool:
+        """Indicates if worker has reached task capacity or critical CPU threshold (>95%)."""
+        return self.active_tasks >= self.max_task_capacity or self.cpu_percent >= 95.0
+
+    @property
     def composite_load_score(self) -> float:
         """
         Calculates a composite load index:
         60% CPU utilization + 30% active task pressure + 10% RAM utilization.
         Lower score indicates greater available capacity.
         """
-        task_pressure = min(self.active_tasks * 10.0, 100.0)
-        return (self.cpu_percent * 0.6) + (task_pressure * 0.3) + (self.ram_percent * 0.1)
+        task_pressure = min((self.active_tasks / max(1, self.max_task_capacity)) * 100.0, 100.0)
+        return round((self.cpu_percent * 0.6) + (task_pressure * 0.3) + (self.ram_percent * 0.1), 2)
 
     def update_metrics(
         self,
         cpu_percent: float,
         ram_percent: float,
         active_tasks: int,
+        latency_ms: float = 0.0,
     ) -> None:
         """Updates telemetry metrics and refreshes the heartbeat timestamp."""
         self.cpu_percent = max(0.0, min(100.0, float(cpu_percent)))
         self.ram_percent = max(0.0, min(100.0, float(ram_percent)))
         self.active_tasks = max(0, int(active_tasks))
+        self.latency_ms = max(0.0, float(latency_ms))
         self.is_alive = True
         self.last_heartbeat = time.time()
+
+    def to_telemetry_dict(self) -> Dict[str, object]:
+        """Serializes node metrics for Gossip packet transmission."""
+        return {
+            "node_id": self.node_id,
+            "host": self.host,
+            "port": self.port,
+            "cpu_percent": self.cpu_percent,
+            "ram_percent": self.ram_percent,
+            "active_tasks": self.active_tasks,
+            "load_score": self.composite_load_score,
+            "is_alive": self.is_alive,
+            "last_heartbeat": self.last_heartbeat,
+        }
 
 
 class TaskRouter:
@@ -102,6 +125,7 @@ class TaskRouter:
         cpu_percent: float,
         ram_percent: float = 0.0,
         active_tasks: int = 0,
+        latency_ms: float = 0.0,
         host: str = "127.0.0.1",
         port: int = 8000,
         is_tls: bool = True,
@@ -123,6 +147,7 @@ class TaskRouter:
             if round_trip_time_ms > 0:
                 self._workers[node_id].round_trip_time_ms = round_trip_time_ms
         self._workers[node_id].update_metrics(cpu_percent, ram_percent, active_tasks)
+        self._workers[node_id].update_metrics(cpu_percent, ram_percent, active_tasks, latency_ms)
 
     def mark_worker_dead(self, node_id: str) -> None:
         """Flags a peer node as unresponsive or dead."""
@@ -134,13 +159,27 @@ class TaskRouter:
         """Removes a peer node completely from the routing registry."""
         self._workers.pop(node_id, None)
 
-    def get_healthy_workers(self, exclude_node_ids: Optional[Set[str]] = None) -> List[WorkerNodeInfo]:
-        """Returns candidate peer nodes that are alive, responsive, and not excluded."""
+    def get_healthy_workers(
+        self,
+        exclude_node_ids: Optional[Set[str]] = None,
+        allow_overloaded: bool = False,
+    ) -> List[WorkerNodeInfo]:
+        """Returns candidate peer nodes that are alive, responsive, and available."""
         exclude = exclude_node_ids or set()
-        return [
+        candidates = [
             w for w in self._workers.values()
             if w.is_healthy and w.node_id not in exclude
         ]
+        if not allow_overloaded:
+            non_overloaded = [w for w in candidates if not w.is_overloaded]
+            if non_overloaded:
+                return non_overloaded
+        return candidates
+
+    def get_worker_rankings(self) -> List[WorkerNodeInfo]:
+        """Returns all registered healthy workers sorted by composite load score ascending."""
+        healthy = self.get_healthy_workers(allow_overloaded=True)
+        return sorted(healthy, key=lambda w: w.composite_load_score)
 
     def select_worker(
         self,
@@ -162,7 +201,8 @@ class TaskRouter:
         # 1. LOCAL_FIRST: Keep execution local if capacity allows
         if strat == RoutingStrategy.LOCAL_FIRST:
             local = next((w for w in candidates if w.node_id == self.local_node_id), None)
-            if local and local.cpu_percent <= self.local_cpu_threshold:
+            if local and local.cpu_percent <= self.local_cpu_threshold and not local.is_overloaded:
+                logger.info(f"Retained task {task.task_id[:8]} locally on {self.local_node_id} (CPU: {local.cpu_percent}%)")
                 return local
             strat = RoutingStrategy.LOWEST_CPU
 

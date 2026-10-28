@@ -12,6 +12,7 @@ from .router import (
 from .reliability import (
     ReliabilityManager,
     TaskAssignment,
+    FailureRecord,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "WorkerNodeInfo",
     "ReliabilityManager",
     "TaskAssignment",
+    "FailureRecord",
 ]

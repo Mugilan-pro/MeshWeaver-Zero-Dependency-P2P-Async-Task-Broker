@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import logging
 import os
-import resource
 import sys
 import time
+try:
+    import resource
+except ImportError:
+    resource = None
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .models import NodeMetrics
