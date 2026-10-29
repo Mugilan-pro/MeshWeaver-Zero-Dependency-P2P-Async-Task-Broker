@@ -104,8 +104,11 @@ class ReliabilityManager:
         lease_timeout_seconds: Optional[float] = None,
     ) -> TaskAssignment:
         """Records a new lease assignment of a task to a worker node."""
-        timeout = lease_timeout_seconds or task.timeout_seconds or self.default_lease_timeout
-        lease_timeout = timeout + 5.0
+        if lease_timeout_seconds is not None:
+            lease_timeout = float(lease_timeout_seconds)
+        else:
+            timeout = task.timeout_seconds or self.default_lease_timeout
+            lease_timeout = timeout + 5.0
 
         task.mark_scheduled(worker_node_id)
         assignment = self._active_leases.get(task.task_id)
