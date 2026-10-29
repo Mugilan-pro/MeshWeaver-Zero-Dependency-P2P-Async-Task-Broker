@@ -9,15 +9,18 @@ import unittest
 import os
 
 # Ensure repository root is on Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 def run_suite():
     print("=" * 70)
     print("   MESHWEAVER: RUNNING MASTER AUTOMATED TEST SUITE")
     print("=" * 70)
 
+    tests_dir = os.path.dirname(__file__)
     loader = unittest.TestLoader()
-    suite = loader.discover("tests", pattern="test_*.py")
+    suite = loader.discover(tests_dir, pattern="test_*.py", top_level_dir=REPO_ROOT)
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

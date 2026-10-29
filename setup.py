@@ -1,10 +1,9 @@
 """
-MeshWeaver Setup & Packaging Specification
-Lightweight, zero-dependency distributed task broker for edge-computing environments.
+MeshWeaver: Zero-Dependency P2P Async Task Broker
+Setup configuration for packaging and edge deployment.
 """
 
-from setuptools import setup, find_packages
-import os
+from setuptools import find_packages, setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -19,7 +18,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/Mugilan-pro/MeshWeaver-Zero-Dependency-P2P-Async-Task-Broker",
     packages=find_packages(exclude=["tests*", "examples*"]),
-    py_modules=["config", "meshweaver_cli"],
+    py_modules=["config", "meshweaver_cli", "cli"],
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
@@ -32,6 +31,7 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.7",
@@ -39,11 +39,15 @@ setup(
         # Zero required external dependencies — runs entirely on Python standard library!
     ],
     extras_require={
+        "rich": ["rich>=12.0.0"],
+        "cloudpickle": ["cloudpickle>=2.0.0"],
+        "psutil": ["psutil>=5.8.0"],
         "enhanced": ["cloudpickle>=2.0.0", "psutil>=5.8.0", "rich>=12.0.0"],
     },
     entry_points={
         "console_scripts": [
             "meshweaver=meshweaver_cli:main",
+            "meshweaver-node=cli:main",
         ],
     },
 )

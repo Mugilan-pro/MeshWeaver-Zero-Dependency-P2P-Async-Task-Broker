@@ -1,7 +1,6 @@
 """
-MeshWeaver Workload Router
-Selects target worker peers across the decentralized mesh network
-using load-aware balancing algorithms (lowest CPU load, composite score, etc.).
+Task router for load-aware scheduling.
+Selects target workers using lowest-CPU, composite load, or round-robin strategies.
 """
 
 from __future__ import annotations
@@ -40,6 +39,8 @@ class WorkerNodeInfo:
     is_alive: bool = True
     last_heartbeat: float = field(default_factory=time.time)
     heartbeat_timeout_seconds: float = 15.0
+    is_tls: bool = True
+    round_trip_time_ms: float = 0.0
 
     @property
     def is_healthy(self) -> bool:
@@ -127,6 +128,8 @@ class TaskRouter:
         latency_ms: float = 0.0,
         host: str = "127.0.0.1",
         port: int = 8000,
+        is_tls: bool = True,
+        round_trip_time_ms: float = 0.0,
     ) -> None:
         """Convenience updater for incoming gossip telemetry snapshots."""
         if node_id not in self._workers:
@@ -134,7 +137,16 @@ class TaskRouter:
                 node_id=node_id,
                 host=host,
                 port=port,
+                is_tls=is_tls,
+                round_trip_time_ms=round_trip_time_ms,
             )
+        else:
+            self._workers[node_id].host = host
+            self._workers[node_id].port = port
+            self._workers[node_id].is_tls = is_tls
+            if round_trip_time_ms > 0:
+                self._workers[node_id].round_trip_time_ms = round_trip_time_ms
+        self._workers[node_id].update_metrics(cpu_percent, ram_percent, active_tasks)
         self._workers[node_id].update_metrics(cpu_percent, ram_percent, active_tasks, latency_ms)
 
     def mark_worker_dead(self, node_id: str) -> None:

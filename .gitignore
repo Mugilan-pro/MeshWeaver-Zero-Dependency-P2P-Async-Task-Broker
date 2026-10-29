@@ -61,13 +61,24 @@ venv/
 env/
 .venv/
 
+# Certificates and keys
+*.crt
+*.key
+*.pem
+.certs/
+
+# Logs and temporary files
+*.log
+*.tmp
+
 # Editor & OS artifacts
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 
-# Archives & assignment docs
+# Archives & raw assignment documents
 *.zip
+*.tar.gz
 *.pdf
 >>>>>>> team/main
